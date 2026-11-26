@@ -20,6 +20,8 @@ export interface Settings {
   listening: { mute: boolean; rate: number };
   exams: boolean;
   speaking: { targetSec: number };
+  /** 页面渲染节奏：等题目选项出现的上限（毫秒），实测 3 秒够绝大多数听力页 */
+  wait: { questionsMs: number };
   /** 整课批量的范围限制：unit 如 'u4'（空=全部单元），limit 0=不限 */
   batch: { unit: string; limit: number };
   ui: { opacity: number; x: number | null; y: number | null };
@@ -35,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   listening: { mute: true, rate: 1 },
   exams: false,
   speaking: { targetSec: 75 },
+  wait: { questionsMs: 3000 },
   batch: { unit: '', limit: 0 },
   ui: { opacity: 0.95, x: null, y: null },
 };
@@ -52,6 +55,7 @@ function merge(base: Settings, patch: Partial<Settings>): Settings {
     asr: { ...base.asr, ...(patch.asr ?? {}) },
     listening: { ...base.listening, ...(patch.listening ?? {}) },
     speaking: { ...base.speaking, ...(patch.speaking ?? {}) },
+    wait: { ...base.wait, ...(patch.wait ?? {}) },
     batch: { ...base.batch, ...(patch.batch ?? {}) },
     ui: { ...base.ui, ...(patch.ui ?? {}) },
   };

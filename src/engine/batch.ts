@@ -267,10 +267,11 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
           continue;
         }
 
-        // 听力 / 客观题：页面常先渲染播放器、后渲染选项，先给 12 秒等题目出现
+        // 听力 / 客观题：页面常先渲染播放器、后渲染选项，先等一小会儿（设置页可调，默认 3 秒）
+        const waitMs = Math.max(500, settings.wait.questionsMs | 0);
         let ctx = content;
         let questions = ctx ? questionsFromContent(ctx) : [];
-        for (let t = 0; t < 40 && !questions.length; t++) {
+        for (let waited = 0; waited < waitMs && !questions.length; waited += 300) {
           await sleep(300);
           assertRunning();
           ctx = latestQuestionsContent() ?? ctx;
@@ -278,7 +279,7 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
           if (!questions.length) questions = questionsFromDom();
         }
         if (!questions.length) {
-          log('等待 12 秒仍未拿到题目，跳过');
+          log(`等待 ${(waitMs / 1000).toFixed(1)} 秒仍未拿到题目，跳过（可在设置页调大「等题目」）`);
           failed.push(it.group);
           continue;
         }

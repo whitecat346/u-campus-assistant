@@ -266,6 +266,18 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
             />
           </div>
           <div className="uc-row">
+            <label>等题目(毫秒)</label>
+            <input
+              className="uc-input"
+              type="number"
+              min={500}
+              step={500}
+              title="听力页常常先出播放器、后出选项；给选项多少时间渲染出来"
+              value={settings.wait.questionsMs}
+              onChange={(e) => patch({ wait: { ...settings.wait, questionsMs: Number(e.target.value) || 3000 } })}
+            />
+          </div>
+          <div className="uc-row">
             <label>LLM 地址</label>
             <input
               className="uc-input"

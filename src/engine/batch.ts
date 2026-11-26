@@ -25,6 +25,9 @@ import { clearCapture, latestQuestionsContent, waitForNewCapture } from '../page
 import {
   applyChoices,
   audioUrlFromContent,
+  blankItems,
+  emptyBlanks,
+  fillBlanks,
   fillTextArea,
   questionsFromContent,
   questionsFromDom,
@@ -36,7 +39,7 @@ import {
   type TaskKind,
 } from '../page/questions';
 import { submitCurrentGroup } from '../page/submit';
-import { draftSpeakingScript, judgeObjective } from './judge';
+import { draftSpeakingScript, judgeBlanks, judgeObjective } from './judge';
 import { assertRunning, getStatus, setStatus, StopSignal, PauseSignal } from './machine';
 
 const DONE_KEY = 'uc.batch.done';
@@ -231,6 +234,55 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
         }
 
         const content = latestQuestionsContent();
+
+        if (kind === 'cloze') {
+          // 听录音补全句子：空位常常比播放器晚一点渲染
+          const waitMs = Math.max(500, settings.wait.questionsMs | 0);
+          for (let waited = 0; waited < waitMs && !blankItems().length; waited += 300) await sleep(300);
+          const items = blankItems();
+          if (!items.length) {
+            log('填空页没有找到空位，跳过');
+            failed.push(it.group);
+            continue;
+          }
+          const ctx = latestQuestionsContent() ?? content;
+          const transcript = ctx ? transcriptFromContent(ctx) : '';
+          const audioUrl = ctx ? audioUrlFromContent(ctx) : (document.querySelector('audio') as HTMLAudioElement | null)?.currentSrc ?? null;
+          log(`听力填空 ${items.length} 空；原文${transcript ? '已下发' : '缺失（将回退 ASR）'}`);
+          const judged = await judgeBlanks({
+            transcript,
+            audioUrl,
+            sentences: items.map((b) => ({ index: b.index, sentence: b.sentence })),
+          });
+          assertRunning();
+          const filled = fillBlanks(judged.words);
+          handled += 1;
+          setStatus({ filled: (getStatus().filled ?? 0) + filled });
+          await sleep(300 + filled * 120);
+
+          const empty = emptyBlanks();
+          if (empty.length) log(`第 ${empty.join(',')} 空没有答案（判题未给出），该组不提交`);
+
+          if (settings.submitMode === 'auto') {
+            if (empty.length) {
+              log('有空位未填，禁止自动提交');
+            } else if (judged.confidence < 0.5) {
+              log(`置信度 ${judged.confidence.toFixed(2)} 偏低，不自动提交`);
+            } else {
+              const outcome = await submitCurrentGroup(true);
+              if (outcome.submitted) {
+                markDone(courseId, it.group);
+                log(`已提交 ${it.name}`);
+              } else {
+                failed.push(it.group);
+                log(`提交未完成：${outcome.message ?? ''}`);
+              }
+            }
+          } else {
+            log('dry-run：填空已填好，未提交（可在页面核对）');
+          }
+          continue;
+        }
 
         if (kind === 'speaking') {
           const prompt = writingPromptFromContent(content) || (content ? transcriptFromContent(content) : '') || speakingPromptText();
@@ -453,3 +505,4 @@ export async function resumeBatchIfNeeded(): Promise<BatchOutcome | null> {
   log(`自动续跑：从第 ${state.index + 1}/${state.plan.length} 条继续`);
   return runPlan(state);
 }
+

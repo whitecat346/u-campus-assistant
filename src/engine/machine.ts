@@ -7,6 +7,9 @@ import { waitForQuestions } from '../page/capture';
 import {
   applyChoices,
   audioUrlFromContent,
+  blankItems,
+  emptyBlanks,
+  fillBlanks,
   detectTaskKind,
   questionsFromContent,
   questionsFromDom,
@@ -16,7 +19,7 @@ import {
   type TaskKind,
 } from '../page/questions';
 import { submitCurrentGroup } from '../page/submit';
-import { draftSpeakingScript, judgeObjective } from './judge';
+import { draftSpeakingScript, judgeBlanks, judgeObjective } from './judge';
 
 export type EngineState = 'idle' | 'planning' | 'group_open' | 'answering' | 'submitting' | 'paused' | 'stopped' | 'failed';
 
@@ -110,6 +113,41 @@ export async function runCurrentGroup(): Promise<void> {
   // 注意 from 传 0：内容可能在本轮开始前就已被截获，不能被「必须更新」卡住。
   const content = await waitForQuestions(Math.max(1000, getSettings().wait.questionsMs), 0);
   assertRunning();
+
+  if (kind === 'cloze') {
+    const items = blankItems();
+    if (!items.length) {
+      setStatus({ state: 'failed', lastError: '填空页没有找到空位' });
+      return;
+    }
+    const transcript = content ? transcriptFromContent(content) : '';
+    const audioUrl = content ? audioUrlFromContent(content) : (document.querySelector('audio') as HTMLAudioElement | null)?.currentSrc ?? null;
+    log(`听力填空 ${items.length} 空；原文${transcript ? '已下发' : '缺失（将回退 ASR）'}`);
+    const judged = await judgeBlanks({
+      transcript,
+      audioUrl,
+      sentences: items.map((b) => ({ index: b.index, sentence: b.sentence })),
+    });
+    assertRunning();
+    const filled = fillBlanks(judged.words);
+    setStatus({ filled: (status.filled ?? 0) + filled });
+    await sleep(300 + filled * 120);
+    const empty = emptyBlanks();
+    if (empty.length) log(`第 ${empty.join(',')} 空没有答案（判题未给出），本次不提交`);
+    if (getSettings().submitMode !== 'auto') {
+      log('dry-run：填空已填好，未提交（可在页面核对）');
+      setStatus({ state: 'idle' });
+      return;
+    }
+    if (empty.length || judged.confidence < 0.5) {
+      setStatus({ state: 'idle' });
+      return;
+    }
+    setStatus({ state: 'submitting' });
+    const outcome = await submitCurrentGroup(true);
+    setStatus({ state: outcome.submitted ? 'idle' : 'failed', lastError: outcome.submitted ? undefined : (outcome.message ?? '提交未完成') });
+    return;
+  }
 
   if (kind === 'speaking') {
     const prompt = speakingPromptText();
@@ -206,3 +244,4 @@ export async function startEngine(): Promise<void> {
     log(`引擎异常: ${(e as Error).message}`);
   }
 }
+

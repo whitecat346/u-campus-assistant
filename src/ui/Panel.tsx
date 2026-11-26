@@ -141,7 +141,7 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
             {status.kind && (
               <div className="uc-row">
                 <label>题型</label>
-                <span className="uc-hint">{status.kind === 'speaking' ? '说（只出稿）' : status.kind === 'listening' ? '听/客观题' : status.kind}</span>
+                <span className="uc-hint">{status.kind === 'speaking' ? '说（只出稿）' : status.kind === 'listening' ? '听/客观题' : status.kind === 'cloze' ? '听/填空' : status.kind}</span>
               </div>
             )}
             {status.script && (

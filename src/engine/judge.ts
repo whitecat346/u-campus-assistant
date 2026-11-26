@@ -127,6 +127,93 @@ export function parseJudge(raw: string, count: number): JudgeResult {
   return { answers, confidence: typeof obj.confidence === 'number' ? obj.confidence : 0.5, note: obj.note };
 }
 
+/* --------------------------- 听力填空（cloze）判题 --------------------------- */
+
+export interface BlankJudgeResult {
+  words: string[];
+  confidence: number;
+  note?: string;
+}
+
+const BLANK_SYS = [
+  '你是英语听力填空助手。给定听力原文和若干带编号空格的句子，请用原文里出现的词/短语填空。',
+  '要求：每空只填原文中真实出现的词（1–4 个词），保持原形，不加标点；空格处应为原文对应位置的词。',
+  '必须严格输出 JSON：{"words":["词1","词2"],"confidence":0.0-1.0,"note":"简短理由"}',
+  'words 按空位编号顺序排列，**长度必须等于空位数量**，一个都不能省。',
+].join('\n');
+
+export async function judgeBlanks(input: {
+  transcript?: string;
+  audioUrl?: string | null;
+  sentences: Array<{ index: number; sentence: string }>;
+}): Promise<BlankJudgeResult> {
+  const { text: transcript } = await resolveTranscript({ transcript: input.transcript, audioUrl: input.audioUrl, questions: [] });
+  const block = input.sentences.map((s) => `${s.index}) ${s.sentence}`).join('\n');
+  const user = [
+    transcript ? `听力原文：\n${transcript}` : '注意：没有可用原文，只能按句子语义与常见表达推断。',
+    `需要填空的句子（空位用 N) 标出）：\n${block}`,
+    `共 ${input.sentences.length} 个空，只输出 JSON。`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const call = (extra: string) =>
+    chat(
+      [
+        { role: 'system', content: BLANK_SYS },
+        { role: 'user', content: user + extra },
+      ],
+      { temperature: 0.1, maxTokens: 2400 },
+    );
+
+  let raw = await call('');
+  let result = parseBlanks(raw, input.sentences.length);
+  for (let round = 0; round < 2; round++) {
+    const missing = input.sentences.map((_, i) => i).filter((i) => !result.words[i]);
+    if (!missing.length) break;
+    log(`填空缺少第 ${missing.map((i) => i + 1).join(',')} 空，补问一次`);
+    raw = await call(`\n\n上一次少了这些空位：${missing.map((i) => i + 1).join(',')}，请补齐，仍然只输出完整 JSON。`);
+    const more = parseBlanks(raw, input.sentences.length);
+    result = {
+      words: result.words.map((w, i) => w || more.words[i] || ''),
+      confidence: Math.min(result.confidence, more.confidence),
+      note: more.note ?? result.note,
+    };
+  }
+  return result;
+}
+
+export function parseBlanks(raw: string, count: number): BlankJudgeResult {
+  const text = stripFence(raw);
+  let obj: { words?: unknown; confidence?: number; note?: string } | null = null;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        obj = JSON.parse(m[0]);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (!obj) throw new Error(`LLM 输出无法解析：${text.slice(0, 200)}`);
+  const words: string[] = new Array(count).fill('');
+  if (Array.isArray(obj.words)) {
+    obj.words.forEach((v, i) => {
+      if (i < count) words[i] = String(v ?? '').trim();
+    });
+  } else if (obj.words && typeof obj.words === 'object') {
+    for (const [k, v] of Object.entries(obj.words as Record<string, unknown>)) {
+      const idx = Number(k.replace(/\D/g, ''));
+      if (Number.isFinite(idx) && idx >= 1 && idx <= count) words[idx - 1] = String(v ?? '').trim();
+    }
+  }
+  if (!words.some(Boolean)) throw new Error(`LLM 未给出任何填空答案：${text.slice(0, 200)}`);
+  return { words, confidence: typeof obj.confidence === 'number' ? obj.confidence : 0.5, note: obj.note };
+}
+
 /* ------------------------------ 说：短稿生成 ------------------------------ */
 
 const SPEAK_SYS = [

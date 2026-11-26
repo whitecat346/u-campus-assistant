@@ -115,7 +115,7 @@ export function unansweredGroups(): number[] {
 
 /* ------------------------------ 题型识别 ------------------------------ */
 
-export type TaskKind = 'listening' | 'speaking' | 'writing' | 'reading' | 'unknown';
+export type TaskKind = 'listening' | 'cloze' | 'speaking' | 'writing' | 'reading' | 'unknown';
 
 /** 从截获内容的键名判断题型（比 DOM 可靠：听力页也可能带 button.record） */
 function kindFromCaptureKeys(): TaskKind | null {
@@ -139,6 +139,9 @@ function kindFromCaptureKeys(): TaskKind | null {
 export function detectTaskKind(): TaskKind {
   const hint = kindFromCaptureKeys();
   if (hint) return hint;
+
+  // 听录音补全句子（实测 questions:scoopquestions + input.fill-blank）
+  if (blankItems().length > 0 && radioGroups().size === 0) return 'cloze';
 
   const radios = radioGroups().size;
   if (radios > 0) return 'listening';
@@ -202,6 +205,57 @@ export function writingPromptFromContent(content: unknown): string {
   const qs = (c?.questions ?? []).map((q) => stripHtml(q.content?.html)).filter(Boolean);
   if (qs.length) return qs.join('\n');
   return '';
+}
+
+/* --------------------- 听力填空（cloze：questions:scoopquestions） --------------------- */
+
+export interface BlankItem {
+  /** 空位序号（页面上标的 1) 2) …），取不到时用 1 基位置 */
+  index: number;
+  /** 该空位所在整句（空位处保留原有 "N)" 标记） */
+  sentence: string;
+  input: HTMLInputElement;
+}
+
+/** 页面上的填空输入框。实测：input[type=text][class*="fill-blank"]，外层 span[data-index] */
+export function blankItems(): BlankItem[] {
+  const out: BlankItem[] = [];
+  const ins = Array.from(document.querySelectorAll<HTMLInputElement>('input[type=text][class*="fill-blank"]'));
+  ins.forEach((input, i) => {
+    const holder = input.closest('span[data-index]') as HTMLElement | null;
+    // 注意：不能用 div[class*="question"]，会命中输入框自身外层的 div（textContent 为空）
+    const block = (input.closest('p') ?? input.closest('li') ?? input.closest('div[class*="fill-blank-item-wrap"]')) as HTMLElement | null;
+    const sentence = (block?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    out.push({ index: Number(holder?.getAttribute('data-index') ?? i + 1), sentence, input });
+  });
+  return out;
+}
+
+export function blankInputs(): HTMLInputElement[] {
+  return blankItems().map((b) => b.input);
+}
+
+/** 用原生 setter + input 事件写值（React 受控输入才认） */
+export function fillBlanks(words: string[]): number {
+  const items = blankItems();
+  let n = 0;
+  items.forEach((b, i) => {
+    const w = words[i];
+    if (typeof w !== 'string') return;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(b.input, w);
+    b.input.dispatchEvent(new Event('input', { bubbles: true }));
+    b.input.dispatchEvent(new Event('change', { bubbles: true }));
+    if (b.input.value === w) n += 1;
+  });
+  return n;
+}
+
+/** 还空着的空位序号 */
+export function emptyBlanks(): number[] {
+  return blankItems()
+    .filter((b) => !b.input.value.trim())
+    .map((b) => b.index);
 }
 
 /* ------------------------- DOM 兜底：直接从页面读题 ------------------------- */

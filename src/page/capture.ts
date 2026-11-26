@@ -35,6 +35,8 @@ const HOOK_SOURCE = `(() => {
     for (var i = 0; i < ks.length; i++) {
       var k = ks[i];
       if (k === 'questions:questions') return true;
+      // 其它题目型内容：实测还有 questions:scoopquestions（听录音补全句子）
+      if (k.indexOf('questions:') === 0) return true;
       if (/individualpresentation|discussion|readaloud|shortanswer|roleplay|purecontent|presentation/i.test(k)) return true;
     }
     return false;
@@ -87,11 +89,13 @@ export function installCapture(): void {
   document.addEventListener('DOMContentLoaded', inject, { once: true });
 }
 
-/** 最近一次截获的「题目型」内容（questions:questions 结构） */
+/** 最近一次截获的「题目型」内容（questions:* 结构，如 questions:questions / questions:scoopquestions） */
 export function latestQuestionsContent<T = Record<string, unknown>>(): T | null {
   for (let i = CAP.length - 1; i >= 0; i--) {
     const v = CAP[i].value as Record<string, unknown>;
-    if (v && typeof v === 'object' && 'questions:questions' in v) return v['questions:questions'] as T;
+    if (!v || typeof v !== 'object') continue;
+    const k = Object.keys(v).find((x) => x.indexOf('questions:') === 0);
+    if (k) return v[k] as T;
   }
   return null;
 }

@@ -21,7 +21,8 @@ function App() {
   useEffect(() => onPageChange(setPage), []);
 
   // 需求：只在答题页面启用「开始作答」，其他页面只显示设置页
-  const settingsOnly = page !== 'answering';
+  // exam = uexercise 考试页（同样是「作答页」，只是题型与流程不同）
+  const settingsOnly = page !== 'answering' && page !== 'exam';
 
   return (
     <>

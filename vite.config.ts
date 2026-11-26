@@ -28,8 +28,10 @@ export default defineConfig({
         supportURL: 'https://github.com/whitecat346/u-campus-assistant/issues',
         // 更新通道：GitHub raw 在部分网络下不可达（TLS 超时），本地联调期改指本机静态服务器（.cache/tools/serve.mjs 50937）。
         // 发布到 GitHub 后再把这两行换回 https://raw.githubusercontent.com/whitecat346/u-campus-assistant/main/dist/u-campus-assistant.user.js
-        updateURL: 'https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js',
-        downloadURL: 'https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js',
+        // 用 tag 固化的路径：jsDelivr 的 @main 分支缓存滞后很久（实测 @main 还停在 0.6.x），
+        // 每次发布打 vX.Y.Z tag 后，这个 URL 就一定指向该版本，天然免疫缓存。
+        updateURL: `https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v${pkg.version}/dist/u-campus-assistant.user.js`,
+        downloadURL: `https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v${pkg.version}/dist/u-campus-assistant.user.js`,
         connect: ['127.0.0.1:8000', '127.0.0.1:11434', '127.0.0.1:50937', '*'],
         grant: ['GM_getValue', 'GM_setValue', 'GM_deleteValue', 'GM_listValues', 'GM_xmlhttpRequest', 'unsafeWindow'],
         // 服务端与本机 LLM 走 127.0.0.1；跨域音频下载走 GM_xmlhttpRequest

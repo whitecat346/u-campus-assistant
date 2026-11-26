@@ -90,7 +90,9 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
           dragRef.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
         }}
       >
-        <span className="uc-title">U校园助手</span>
+        <span className="uc-title">
+          U校园助手 <span className="uc-ver">v{__UC_VERSION__}</span>
+        </span>
         <button className="uc-btn" style={{ flex: 'none', padding: '2px 8px' }} onClick={onClose}>
           ✕
         </button>

@@ -20,6 +20,7 @@ export const PANEL_CSS = `
   user-select: none;
 }
 .uc-title { font-size: 14px; font-weight: 600; flex: 1; }
+.uc-ver { font-size: 11px; font-weight: 400; opacity: .75; margin-left: 4px; }
 .uc-tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid #eef1f7; }
 .uc-tab {
   padding: 6px 12px; font-size: 13px; border: none; background: transparent;

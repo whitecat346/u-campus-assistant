@@ -1,3 +1,9 @@
+// 入口：必须尽早安装 JSON.parse 钩子（抓解密后的内容），再把 UI 挂到 Shadow DOM。
+import { installCapture } from './page/capture';
+
+// ① 先装抓取钩子（document-start 生效，必须早于页面自身的解密解析）
+installCapture();
+
 import { createRoot } from 'react-dom/client';
 import { useEffect, useState } from 'react';
 import { Panel } from './ui/Panel';
@@ -14,7 +20,7 @@ function App() {
   useEffect(() => onPageChange(setPage), []);
 
   // 需求：只在答题页面启用「开始作答」，其他页面只显示设置页
-  const settingsOnly = page !== 'answering' && page !== 'exam';
+  const settingsOnly = page !== 'answering';
 
   return (
     <>
@@ -41,4 +47,9 @@ function mount() {
   log(`已注入 ${location.href}`);
 }
 
-mount();
+// document-start 时 body 可能还不存在 → 等 DOM 就绪再挂 UI
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mount, { once: true });
+} else {
+  mount();
+}

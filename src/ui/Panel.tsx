@@ -114,6 +114,29 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
               <label>提交策略</label>
               <span className="uc-hint">{settings.submitMode === 'dryRun' ? '只填不交（dry-run）' : '自动提交'}</span>
             </div>
+            {status.kind && (
+              <div className="uc-row">
+                <label>题型</label>
+                <span className="uc-hint">{status.kind === 'speaking' ? '说（只出稿）' : status.kind === 'listening' ? '听/客观题' : status.kind}</span>
+              </div>
+            )}
+            {status.script && (
+              <div style={{ marginTop: 8 }}>
+                <div className="uc-hint" style={{ marginBottom: 4 }}>
+                  短稿（自己读，脚本不会提交口语）
+                </div>
+                <div className="uc-log" style={{ maxHeight: 150 }}>
+                  {status.script}
+                </div>
+                <button
+                  className="uc-btn"
+                  style={{ marginTop: 6 }}
+                  onClick={() => void navigator.clipboard.writeText(status.script ?? '')}
+                >
+                  复制短稿
+                </button>
+              </div>
+            )}
             {!canAnswer && <div className="uc-hint" style={{ marginTop: 8 }}>当前不是答题页面，「开始作答」已禁用。</div>}
             {status.lastError && <div className="uc-hint" style={{ color: '#d4380d' }}>错误：{status.lastError}</div>}
           </div>

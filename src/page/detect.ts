@@ -1,42 +1,53 @@
-// 页面识别（docs/DESIGN.md §4 + §9 已知未知 1）。
-// 路由白名单必须勘察真实站点后补全；此处只做「保守判定」：识别不出就当普通页面，
-// 面板只显示设置，绝不显示「开始作答」。
+// 页面识别（实测定型，见 docs/PAGE-MAP.md §4）。
+// 事实：答题页 = https://ucontent.unipus.cn/_pc_default/pc.html?...#/<courseId>/courseware/<unit>/<node>/<group>/<child>/p_<n>
+// 目录页 = u.unipus.cn/user/student/mycourse/courseCatalog；门户 = u.unipus.cn 其它
+import { parseAnswerRoute } from '../core/api';
 
-export type PageKind = 'unknown' | 'portal' | 'course-home' | 'answering' | 'exam';
-
-/** 待勘察确认后填入。例：/homework/、/test/、/unit/ */
-const ANSWERING_PATTERNS: RegExp[] = [];
+export type PageKind = 'unknown' | 'portal' | 'catalog' | 'answering';
 
 export function detectPage(url: string = location.href): PageKind {
-  const u = url.toLowerCase();
-  if (!/\.unipus\.cn/.test(new URL(u).hostname)) return 'unknown';
-  if (ANSWERING_PATTERNS.some((re) => re.test(u))) return 'answering';
-  if (/uschool\.unipus\.cn/.test(u)) return 'course-home';
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return 'unknown';
+  }
+  if (!/(^|\.)unipus\.cn$/.test(u.hostname)) return 'unknown';
+  if (u.hostname === 'ucontent.unipus.cn' && u.pathname.includes('/pc.html') && parseAnswerRoute(url)) return 'answering';
+  if (u.hostname === 'u.unipus.cn' && /\/student\/mycourse\/courseCatalog/.test(u.pathname)) return 'catalog';
   return 'portal';
 }
 
-/** 答题容器的存在性校验——路由命中但 DOM 不对时仍视为不可作答 */
+/** 答题容器存在性（路由命中还不够，DOM 也要对） */
 export function hasAnswerRoot(): boolean {
-  // 待勘察：真实容器选择器
-  return false;
+  return !!(
+    document.querySelector('div[class*="questions--question-"]') ||
+    document.querySelector('button[class*="submit-bar-pc--btn"]') ||
+    document.querySelector('button.record') ||
+    document.querySelector('[class*="individualpresentation"]')
+  );
 }
 
 export function canStartAnswering(kind: PageKind = detectPage()): boolean {
-  return kind === 'answering' && (hasAnswerRoot() || ANSWERPAGE_ROUTE_ONLY);
+  return kind === 'answering';
 }
 
-/** 勘察前：仅按路由判断（后续 DOM 校验就绪后置 false） */
-const ANSWERPAGE_ROUTE_ONLY = true;
-
-/** 监听 SPA 路由变化（老站点多为整页跳转，此钩子用于兼容前端路由） */
+/** 监听 SPA 路由变化（hash 路由，popstate + 轮询双保险） */
 export function onPageChange(fn: (kind: PageKind) => void): () => void {
   let last = detectPage();
-  const timer = window.setInterval(() => {
+  const fire = () => {
     const now = detectPage();
     if (now !== last) {
       last = now;
       fn(now);
     }
-  }, 1000);
-  return () => window.clearInterval(timer);
+  };
+  window.addEventListener('hashchange', fire);
+  window.addEventListener('popstate', fire);
+  const timer = window.setInterval(fire, 1000);
+  return () => {
+    window.removeEventListener('hashchange', fire);
+    window.removeEventListener('popstate', fire);
+    window.clearInterval(timer);
+  };
 }

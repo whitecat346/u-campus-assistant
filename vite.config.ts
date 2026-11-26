@@ -16,7 +16,7 @@ export default defineConfig({
         author: 'local',
         icon: 'https://u.unipus.cn/favicon.ico',
         match: ['*://*.unipus.cn/*'],
-        'run-at': 'document-idle',
+        'run-at': 'document-start',
         connect: ['127.0.0.1:8000', '127.0.0.1:11434', '*'],
         grant: ['GM_getValue', 'GM_setValue', 'GM_deleteValue', 'GM_listValues', 'GM_xmlhttpRequest', 'unsafeWindow'],
         // 服务端与本机 LLM 走 127.0.0.1；跨域音频下载走 GM_xmlhttpRequest

@@ -232,6 +232,23 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
             </select>
           </div>
           <div className="uc-row">
+            <label>批量范围</label>
+            <input
+              className="uc-input"
+              placeholder="单元如 u4（空=全部）"
+              value={settings.batch.unit}
+              onChange={(e) => patch({ batch: { ...settings.batch, unit: e.target.value.trim() } })}
+            />
+            <input
+              className="uc-input"
+              type="number"
+              min={0}
+              placeholder="上限 0=不限"
+              value={settings.batch.limit}
+              onChange={(e) => patch({ batch: { ...settings.batch, limit: Number(e.target.value) || 0 } })}
+            />
+          </div>
+          <div className="uc-row">
             <label>间隔(秒)</label>
             <input
               className="uc-input"

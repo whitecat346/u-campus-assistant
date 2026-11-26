@@ -136,12 +136,17 @@ export async function startBatch(): Promise<BatchOutcome> {
   let skippedDone = 0;
   let skippedExam = 0;
   let skippedOptional = 0;
+  let skippedUnit = 0;
 
   for (const it of items) {
     const st = progress[it.group];
     if (!st) continue;
     if (it.tabType === 'text') {
       skippedText += 1;
+      continue;
+    }
+    if (settings.batch.unit && it.unit !== settings.batch.unit) {
+      skippedUnit += 1;
       continue;
     }
     if ((st.state?.pass ?? 0) > 0 || done.has(it.group)) {
@@ -163,8 +168,11 @@ export async function startBatch(): Promise<BatchOutcome> {
     queue.push(it);
   }
 
+  const limit = Math.max(0, settings.batch.limit | 0);
+  const plan = limit > 0 ? queue.slice(0, limit) : queue;
+
   log(
-    `待办 ${queue.length}（跳过：已完成 ${skippedDone} / 无提交文本页 ${skippedText} / 非必修 ${skippedOptional} / 测试或已过截止 ${skippedExam}）`,
+    `待办 ${queue.length}${limit > 0 ? `（本轮上限 ${limit}）` : ''}（跳过：已完成 ${skippedDone} / 无提交文本页 ${skippedText} / 非必修 ${skippedOptional} / 测试或已过截止 ${skippedExam} / 其它单元 ${skippedUnit}）`,
   );
 
   const scripts: Array<{ group: string; name: string; text: string }> = [];
@@ -172,13 +180,13 @@ export async function startBatch(): Promise<BatchOutcome> {
   let handled = 0;
   let skipped = 0;
 
-  for (let i = 0; i < queue.length; i++) {
-    const it = queue[i];
+  for (let i = 0; i < plan.length; i++) {
+    const it = plan[i];
     assertRunning();
-    setStatus({ batch: { total: queue.length, index: i + 1, done: handled, current: `${it.unitName} / ${it.name}` }, group: it.group });
+    setStatus({ batch: { total: plan.length, index: i + 1, done: handled, current: `${it.unitName} / ${it.name}` }, group: it.group });
 
     const kind = kindOfBase(it.base);
-    log(`[${i + 1}/${queue.length}] ${it.unitName} / ${it.name}（${it.group}，base=${it.base} → ${kind}）`);
+    log(`[${i + 1}/${plan.length}] ${it.unitName} / ${it.name}（${it.group}，base=${it.base} → ${kind}）`);
 
     try {
       const ok = await gotoGroup(itemToRoute(it, courseId));
@@ -268,7 +276,7 @@ export async function startBatch(): Promise<BatchOutcome> {
     await sleep(jitterMs());
   }
 
-  setStatus({ state: 'idle', batch: { total: queue.length, index: queue.length, done: handled } });
+  setStatus({ state: 'idle', batch: { total: plan.length, index: plan.length, done: handled } });
   log(`批量结束：处理 ${handled}，跳过 ${skipped}，失败 ${failed.length}，短稿 ${scripts.length}`);
   return { total: queue.length, handled, skipped, scripts: scripts.length, failed };
 }

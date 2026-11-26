@@ -65,7 +65,7 @@ export async function judgeObjective(input: JudgeInput): Promise<JudgeResult> {
       { role: 'system', content: SYS },
       { role: 'user', content: user },
     ],
-    { temperature: 0.1, maxTokens: 800 },
+    { temperature: 0.1, maxTokens: 2400 },
   );
 
   return parseJudge(raw, input.questions.length);
@@ -117,7 +117,7 @@ export async function draftSpeakingScript(promptText: string, targetSec = 75): P
         content: `目标时长约 ${targetSec} 秒（约 ${words} 词）。题目与提示如下：\n${promptText.slice(0, 4000)}\n\n只输出英文稿正文。`,
       },
     ],
-    { temperature: 0.6, maxTokens: 700 },
+    { temperature: 0.6, maxTokens: 2400 },
   );
   return stripFence(raw).replace(/^["']|["']$/g, '').trim();
 }

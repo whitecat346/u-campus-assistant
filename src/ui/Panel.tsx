@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getSettings, saveSettings, resetSettings, type Settings } from '../core/settings';
 import { canStartAnswering, detectPage } from '../page/detect';
 import { getStatus, onStatus, startEngine, pause, resume, stop, type EngineStatus } from '../engine/machine';
+import { startBatch } from '../engine/batch';
 import { onLog, snapshot, type LogLine } from '../core/log';
 
 type Tab = 'run' | 'settings' | 'log';
@@ -63,6 +64,13 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
   const canAnswer = useMemo(() => !settingsOnly && canStartAnswering(page), [page, settingsOnly]);
   const running = status.state !== 'idle' && status.state !== 'stopped' && status.state !== 'failed';
 
+  const runBatch = () => {
+    void startBatch().catch((e: Error) => {
+      setLines(snapshot());
+      console.warn('[U校园助手] 批量失败', e);
+    });
+  };
+
   const patch = (p: Partial<Settings>) => setSettings(saveSettings(p));
 
   return (
@@ -114,6 +122,22 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
               <label>提交策略</label>
               <span className="uc-hint">{settings.submitMode === 'dryRun' ? '只填不交（dry-run）' : '自动提交'}</span>
             </div>
+            {status.batch && (
+              <>
+                <div className="uc-row">
+                  <label>整课进度</label>
+                  <span className="uc-hint">
+                    {status.batch.done} / {status.batch.total}
+                  </span>
+                </div>
+                {status.batch.current && (
+                  <div className="uc-row">
+                    <label>当前</label>
+                    <span className="uc-hint">{status.batch.current}</span>
+                  </div>
+                )}
+              </>
+            )}
             {status.kind && (
               <div className="uc-row">
                 <label>题型</label>
@@ -137,14 +161,42 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
                 </button>
               </div>
             )}
+            {status.scripts && status.scripts.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div className="uc-hint" style={{ marginBottom: 4 }}>
+                  说类短稿（共 {status.scripts.length} 条，自己读、自己交）
+                </div>
+                <div className="uc-log" style={{ maxHeight: 160 }}>
+                  {status.scripts
+                    .map((s, i) => `#${i + 1} ${s.name}\n${s.text}`)
+                    .join('\n\n')}
+                </div>
+                <button
+                  className="uc-btn"
+                  style={{ marginTop: 6 }}
+                  onClick={() =>
+                    void navigator.clipboard.writeText(
+                      (status.scripts ?? []).map((s, i) => `#${i + 1} ${s.name}\n${s.text}`).join('\n\n'),
+                    )
+                  }
+                >
+                  复制全部短稿
+                </button>
+              </div>
+            )}
             {!canAnswer && <div className="uc-hint" style={{ marginTop: 8 }}>当前不是答题页面，「开始作答」已禁用。</div>}
             {status.lastError && <div className="uc-hint" style={{ color: '#d4380d' }}>错误：{status.lastError}</div>}
           </div>
           <div className="uc-btns">
             {!running ? (
-              <button className="uc-btn primary" disabled={!canAnswer} onClick={() => void startEngine()}>
-                开始作答
-              </button>
+              <>
+                <button className="uc-btn primary" disabled={!canAnswer} onClick={() => void startEngine()}>
+                  开始作答
+                </button>
+                <button className="uc-btn" disabled={!canAnswer} onClick={runBatch} title="遍历整门课未完成项">
+                  整课批量
+                </button>
+              </>
             ) : (
               <>
                 <button className="uc-btn" onClick={() => (status.state === 'paused' ? resume() : pause())}>

@@ -29,6 +29,10 @@ export interface EngineStatus {
   /** 说类任务生成的口语短稿 */
   script?: string;
   lastError?: string;
+  /** 批量模式进度 */
+  batch?: { total: number; index: number; done: number; current?: string };
+  /** 批量模式收集到的说类短稿 */
+  scripts?: Array<{ group: string; name: string; text: string }>;
 }
 
 type StatusListener = (s: EngineStatus) => void;
@@ -45,7 +49,7 @@ export function onStatus(fn: StatusListener): () => void {
   return () => listeners.delete(fn);
 }
 
-function setStatus(patch: Partial<EngineStatus>): void {
+export function setStatus(patch: Partial<EngineStatus>): void {
   status = { ...status, ...patch };
   listeners.forEach((fn) => fn(status));
 }
@@ -53,7 +57,9 @@ function setStatus(patch: Partial<EngineStatus>): void {
 class StopSignal extends Error {}
 class PauseSignal extends Error {}
 
-function assertRunning(): void {
+export { StopSignal, PauseSignal };
+
+export function assertRunning(): void {
   if (RUNTIME.stopped) throw new StopSignal();
   if (RUNTIME.paused) throw new PauseSignal();
 }

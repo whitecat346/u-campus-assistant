@@ -13,6 +13,10 @@ declare function GM_xmlhttpRequest(details: {
   onload?: (resp: { status: number; response: unknown; responseText: string; responseHeaders: string }) => void;
   onerror?: (err: unknown) => void;
   ontimeout?: () => void;
+  onabort?: () => void;
 }): { abort(): void };
 
 declare const unsafeWindow: Window & typeof globalThis;
+
+// 构建期注入（vite define），见 vite.config.ts
+declare const __UC_VERSION__: string;

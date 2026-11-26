@@ -139,3 +139,39 @@ export function speakingPromptText(): string {
   const body = document.body.innerText.trim();
   return (box && box.length > 20 ? box : body).slice(0, 3000);
 }
+
+/* ---------------------------- 文本输入（写作/简答） ---------------------------- */
+
+export function textInputs(): Array<HTMLTextAreaElement | HTMLElement> {
+  const areas = Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea'));
+  const edits = Array.from(document.querySelectorAll<HTMLElement>('[contenteditable="true"]'));
+  return [...areas, ...edits];
+}
+
+/** 用「原生 setter + input 事件」写入，React 受控组件才会更新 state */
+export function fillTextArea(el: HTMLTextAreaElement | HTMLElement, value: string): boolean {
+  try {
+    if (el instanceof HTMLTextAreaElement) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return el.value === value;
+    }
+    el.focus();
+    el.textContent = value;
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 从内容里抽取写作题的要求文本 */
+export function writingPromptFromContent(content: unknown): string {
+  const c = content as { questions?: Array<{ content?: { html?: string } }>; prompt?: string };
+  if (typeof c?.prompt === 'string' && c.prompt.trim()) return stripHtml(c.prompt);
+  const qs = (c?.questions ?? []).map((q) => stripHtml(q.content?.html)).filter(Boolean);
+  if (qs.length) return qs.join('\n');
+  return '';
+}

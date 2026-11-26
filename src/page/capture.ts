@@ -17,11 +17,18 @@ const CAP: CapturedContent[] = [];
 const MAX = 30;
 let installed = false;
 
+// 关键：先抓住「未被污染的」JSON.parse。
+// 实测教训：Tampermonkey 的沙箱里 JSON 与页面同源（同一个函数对象），
+// 若这里用 JSON.parse 解析 detail，会再次触发我们注入的页面钩子 → 无限递归
+// （Uncaught RangeError: Maximum call stack size exceeded）。
+const nativeParse: typeof JSON.parse = JSON.parse.bind(JSON);
+
 const HOOK_SOURCE = `(() => {
   if (window.__ucHookInstalled) return;
   window.__ucHookInstalled = true;
   var orig = JSON.parse;
   window.__ucCap = [];
+  var lastJson = '', lastAt = 0;
   function isContent(o) {
     if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
     var ks = Object.keys(o);
@@ -37,7 +44,12 @@ const HOOK_SOURCE = `(() => {
     try {
       if (isContent(out)) {
         var payload = JSON.stringify(out);
-        window.__ucCap.push({ keys: Object.keys(out), json: payload, at: Date.now() });
+        // 去重：同一份内容在 1s 内不重复派发，彻底切断任何形式的回环
+        var now = Date.now();
+        if (payload === lastJson && now - lastAt < 1000) return out;
+        lastJson = payload;
+        lastAt = now;
+        window.__ucCap.push({ keys: Object.keys(out), json: payload, at: now });
         if (window.__ucCap.length > 30) window.__ucCap.shift();
         document.dispatchEvent(new CustomEvent('uc:content', { detail: payload }));
       }
@@ -55,7 +67,7 @@ export function installCapture(): void {
     const detail = (ev as CustomEvent<string>).detail;
     if (typeof detail !== 'string') return;
     try {
-      const value = JSON.parse(detail);
+      const value = nativeParse(detail);
       if (CAP.length >= MAX) CAP.shift();
       CAP.push({ keys: Object.keys(value ?? {}), value, at: Date.now() });
     } catch {
@@ -94,6 +106,16 @@ export function captureCount(): number {
 
 export function clearCapture(): void {
   CAP.length = 0;
+}
+
+/** 等待「新的」截获（批量模式翻页后判断新内容是否已到） */
+export async function waitForNewCapture(from: number, timeoutMs = 25000): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (CAP.some((c) => c.at >= from)) return true;
+    await new Promise((r) => window.setTimeout(r, 250));
+  }
+  return false;
 }
 
 /** 等待题目内容出现（页面切题/刷新后会重新下发；只读数据，不改页面） */

@@ -99,8 +99,11 @@ export interface CourseTree {
   units: CourseUnit[];
 }
 
+/* 实测坑：courseId 里含 `+` 与 `:`，**不能用 encodeURIComponent**。
+   编码成 %2B 后服务端返回 {"code":2,"course":""}；原始字符串才正确。 */
 export async function fetchCourseTree(courseId: string): Promise<CourseTree> {
-  const r = await apiGet<{ code: number; course: string }>(`/course/api/course/${encodeURIComponent(courseId)}/default/`);
+  const r = await apiGet<{ code: number; course: string }>(`/course/api/course/${courseId}/default/`);
+  if (!r.course) throw new ApiError('课程树为空（可能未登录或 courseId 错误）', 200, JSON.stringify(r).slice(0, 200));
   return JSON.parse(r.course) as CourseTree;
 }
 
@@ -111,20 +114,41 @@ export interface LeafState {
   tab_type?: string;
 }
 
-export async function fetchProgress(courseId: string, unitOrOpenId: string, openId?: string): Promise<Record<string, LeafState>> {
-  const unit = openId ? unitOrOpenId : unitOrOpenId;
+/** 真实路径（抓包确认）：/course/api/v2/course_progress/{courseId}/{unit}/{openId}/default/ */
+export async function fetchProgress(courseId: string, unit: string, openId: string): Promise<Record<string, LeafState>> {
   const r = await apiGet<{ rt?: { leafs?: Record<string, LeafState> } }>(
-    `/course/api/v2/course_progress/${encodeURIComponent(courseId)}/${encodeURIComponent(unit)}/${encodeURIComponent(openId ?? '')}/default/`.replace('//default/', '/default/'),
+    `/course/api/v2/course_progress/${courseId}/${unit}/${openId}/default/`,
   );
   return r.rt?.leafs ?? {};
 }
 
-/** 进度接口：unit 段传 openId 也可，二者都试（实测两种都能 200） */
-export async function fetchProgressSafe(courseId: string, openId: string): Promise<Record<string, LeafState>> {
-  const r = await apiGet<{ rt?: { leafs?: Record<string, LeafState> } }>(
-    `/course/api/v2/course_progress/${encodeURIComponent(courseId)}/${encodeURIComponent(openId)}/default/`,
-  );
+/** 不带 unit 的整课进度：/course_progress/{courseId}/{openId}/default/ */
+export async function fetchAllProgress(courseId: string, openId: string): Promise<Record<string, LeafState>> {
+  const r = await apiGet<{ rt?: { leafs?: Record<string, LeafState> } }>(`/course/api/v2/course_progress/${courseId}/${openId}/default/`);
   return r.rt?.leafs ?? {};
+}
+
+let cachedOpenId = '';
+
+/** open_id：从 /auth/api/user 读（也可从 token payload 解出来） */
+export async function getOpenId(): Promise<string> {
+  if (cachedOpenId) return cachedOpenId;
+  try {
+    const t = getToken();
+    const payload = t.split('.')[1];
+    if (payload) {
+      const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { open_id?: string };
+      if (json.open_id) {
+        cachedOpenId = json.open_id;
+        return cachedOpenId;
+      }
+    }
+  } catch {
+    /* fallthrough */
+  }
+  const r = await apiGet<{ open_id?: string }>('/auth/api/user');
+  cachedOpenId = r.open_id ?? '';
+  return cachedOpenId;
 }
 
 export interface GroupMeta {
@@ -134,9 +158,69 @@ export interface GroupMeta {
 }
 
 export async function fetchGroupMeta(courseId: string, groupId: string): Promise<GroupMeta | null> {
-  const r = await apiGet<{ code: number; group: string }>(`/course/api/pc/group/${encodeURIComponent(courseId)}/${encodeURIComponent(groupId)}/default/`);
+  const r = await apiGet<{ code: number; group: string }>(`/course/api/pc/group/${courseId}/${groupId}/default/`);
   if (!r.group) return null;
   return JSON.parse(r.group) as GroupMeta;
+}
+
+/** 把课程树摊平成「可作答单元」列表：unit → node → node → group(base) */
+export interface CourseItem {
+  unit: string;
+  unitName: string;
+  node: string;
+  nodeName: string;
+  path: string[];
+  group: string;
+  base: string;
+  tabType: string;
+  name: string;
+}
+
+export function flattenCourse(tree: CourseTree): CourseItem[] {
+  const out: CourseItem[] = [];
+  const walk = (unit: string, unitName: string, path: string[], nodeNames: string[], node: CourseNode, isUnit = false): void => {
+    const kids = node.children ?? [];
+    if (!isUnit && (node.base || !kids.length)) {
+      // 终点：group（有 base）或没有子节点的节点
+      if (path.length >= 3) {
+        out.push({
+          unit,
+          unitName,
+          node: path[0] ?? unit,
+          nodeName: nodeNames[0] ?? '',
+          path: [...path],
+          group: node.url,
+          base: node.base ?? '',
+          tabType: node.tab_type ?? '',
+          name: node.name,
+        });
+      }
+      return;
+    }
+    const nextPath = isUnit ? path : [...path, node.url];
+    const nextNames = isUnit ? nodeNames : [...nodeNames, node.name];
+    for (const k of kids) walk(unit, unitName, nextPath, nextNames, k);
+  };
+  for (const unit of tree.units ?? []) {
+    // 单元 → 其每个子节点走一遍（unit 自身不进 path）
+    for (const child of unit.children ?? []) {
+      walk(unit.url, unit.name, [], [], child);
+    }
+  }
+  return out;
+}
+
+/** 由 CourseItem 生成 hash（unit/node/node/group → 实测就是这四段） */
+export function itemToRoute(item: CourseItem, courseId: string): AnswerPageRoute {
+  const seg = item.path.slice(0, 3);
+  return {
+    courseId,
+    unit: item.unit,
+    node: seg[0] ?? item.unit,
+    group: seg[1] ?? item.group,
+    child: seg[2] ?? item.group,
+    page: 'p_1',
+  };
 }
 
 /* --------------------------------- 当前页 -------------------------------- */

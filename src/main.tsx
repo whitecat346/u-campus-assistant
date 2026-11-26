@@ -36,6 +36,8 @@ function mount() {
   if (document.getElementById(HOST_ID)) return;
   const host = document.createElement('div');
   host.id = HOST_ID;
+  // 运行时标识：DEV 面板/MCP 自检可据此确认装的是哪个构建
+  host.dataset.ucVersion = __UC_VERSION__;
   const shadow = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
   style.textContent = PANEL_CSS;
@@ -44,7 +46,7 @@ function mount() {
   shadow.appendChild(root);
   document.documentElement.appendChild(host);
   createRoot(root).render(<App />);
-  log(`已注入 ${location.href}`);
+  log(`已注入 ${location.href} (v${__UC_VERSION__})`);
 }
 
 // document-start 时 body 可能还不存在 → 等 DOM 就绪再挂 UI

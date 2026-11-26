@@ -31,6 +31,7 @@ import {
   fillTextArea,
   questionsFromContent,
   questionsFromDom,
+  radioGroups,
   speakingPromptText,
   textInputs,
   transcriptFromContent,
@@ -212,7 +213,8 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
         group: it.group,
       });
 
-      const kind = kindOfBase(it.base);
+      const kindOf = kindOfBase(it.base);
+      let kind: TaskKind = kindOf;
       log(`[${i + 1}/${plan.length}] ${it.unitName} / ${it.name}（${it.group}，base=${it.base} → ${kind}）`);
 
       // 被弹回目录页/其它页面时，先回到答题页（整页跳转，靠下次 mount 自动续跑）
@@ -234,6 +236,13 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
         }
 
         const content = latestQuestionsContent();
+
+        // 实测教训：base 只说明「听力家族」，具体是选择题还是填空要看页面 DOM
+        // （objectivesimple_scoop_course 可能就是填空，u4g266 实测如此）
+        if (kind === 'listening' && blankItems().length > 0 && radioGroups().size === 0) {
+          kind = 'cloze';
+          log('页面是填空形态（input.fill-blank），按听力填空处理');
+        }
 
         if (kind === 'cloze') {
           // 听录音补全句子：空位常常比播放器晚一点渲染
@@ -505,4 +514,5 @@ export async function resumeBatchIfNeeded(): Promise<BatchOutcome | null> {
   log(`自动续跑：从第 ${state.index + 1}/${state.plan.length} 条继续`);
   return runPlan(state);
 }
+
 

@@ -1,6 +1,7 @@
 // 题目解析与作答（实测选择器，见 docs/PAGE-MAP.md §4.1）。
 // 原则：**只驱动 UI，不伪造接口**。点 radio / 填 textarea 后由页面自身生成提交体，
 // 因此无需构造 state / qid / version 等内部字段（这些字段实测存在但由前端维护）。
+import { latestKeys } from './capture';
 
 export interface Option {
   caption: string;
@@ -106,22 +107,39 @@ export function checkedAnswers(): Record<number, string> {
 
 export type TaskKind = 'listening' | 'speaking' | 'writing' | 'reading' | 'unknown';
 
+/** 从截获内容的键名判断题型（比 DOM 可靠：听力页也可能带 button.record） */
+function kindFromCaptureKeys(): TaskKind | null {
+  const keys = latestKeys().join(' ');
+  if (!keys) return null;
+  if (/individualpresentation|discussion|readaloud|roleplay|presentation|oral/i.test(keys)) return 'speaking';
+  if (/shortanswer/i.test(keys)) return 'writing';
+  if (/purecontent/i.test(keys)) return 'reading';
+  if (/questions:questions/i.test(keys)) return null; // 客观题/简答都可能，交给 DOM 再判
+  return null;
+}
+
 /**
- * 识别当前 group 的任务类型。判据来自实测：
- *  * 录音组件 button.record（+ .play/.replay）→ 说
- *  * textarea / contenteditable 文本域 → 写（简答）
- *  * 单选 radio → 听/客观
- *  * 只有正文无题 → 阅读材料
+ * 识别当前 group 的任务类型。优先级（实测教训：u4g279 听力页也带 1 个 button.record）：
+ *  1. 内容键名（speaking/writing/reading 特征键）
+ *  2. 单选 radio → 听/客观
+ *  3. 文本域 → 写
+ *  4. 录音组件 button.record → 说
+ *  5. 只有正文无题 → 阅读材料
  */
 export function detectTaskKind(): TaskKind {
-  const record = document.querySelector('button.record, [class*="record--btn"], [class*="readaloud"] button');
-  const text = document.querySelector('textarea, [contenteditable="true"], input[type=text]');
+  const hint = kindFromCaptureKeys();
+  if (hint) return hint;
+
   const radios = radioGroups().size;
-  const audio = document.querySelector('audio');
-  if (record) return 'speaking';
   if (radios > 0) return 'listening';
+
+  const text = document.querySelector('textarea, [contenteditable="true"], input[type=text]');
   if (text) return 'writing';
-  if (audio) return 'listening';
+
+  const record = document.querySelector('button.record, [class*="record--btn"], [class*="readaloud"] button');
+  if (record) return 'speaking';
+
+  if (document.querySelector('audio')) return 'listening';
   if (document.body.innerText.trim().length > 200) return 'reading';
   return 'unknown';
 }

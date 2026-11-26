@@ -100,6 +100,12 @@ export function latestAnyContent(): CapturedContent | null {
   return CAP.length ? CAP[CAP.length - 1] : null;
 }
 
+/** 最近一次截获内容的键名（用来判定题型：speaking/writing 的键各不相同） */
+export function latestKeys(): string[] {
+  const last = CAP[CAP.length - 1];
+  return last ? last.keys : [];
+}
+
 export function captureCount(): number {
   return CAP.length;
 }

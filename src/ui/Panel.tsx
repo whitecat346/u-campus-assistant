@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getSettings, saveSettings, resetSettings, type Settings } from '../core/settings';
-import { canStartAnswering, detectPage } from '../page/detect';
+import { canStartAnswering, detectPage, onPageChange } from '../page/detect';
 import { getStatus, onStatus, startEngine, pause, resume, stop, type EngineStatus } from '../engine/machine';
 import { startBatch } from '../engine/batch';
 import { onLog, snapshot, type LogLine } from '../core/log';
@@ -61,8 +61,10 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
     };
   }, [pos.x, pos.y]);
 
-  const page = useMemo(() => detectPage(), []);
-  const canAnswer = useMemo(() => !settingsOnly && canStartAnswering(page), [page, settingsOnly]);
+  // 修复：原来用 useMemo(..., []) 只在挂载时算一次，SPA 内部切题/切页后「当前页面」与按钮可用性不会更新
+  const [page, setPage] = useState(detectPage);
+  useEffect(() => onPageChange(setPage), []);
+  const canAnswer = !settingsOnly && canStartAnswering(page);
   const running = status.state !== 'idle' && status.state !== 'stopped' && status.state !== 'failed';
 
   const runBatch = () => {

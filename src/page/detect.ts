@@ -6,6 +6,11 @@ import { parseAnswerRoute } from '../core/api';
 // exam = 作业与测试系统（uexercise.unipus.cn），见 docs/PAGE-MAP.md §14
 export type PageKind = 'unknown' | 'portal' | 'catalog' | 'answering' | 'exam';
 
+/** 考试容器存在性：uexercise 的试题始终以 `.itest-ques-set` 渲染 */
+export function hasExamRoot(): boolean {
+  return document.querySelectorAll('.itest-ques-set').length > 0;
+}
+
 export function detectPage(url: string = location.href): PageKind {
   let u: URL;
   try {
@@ -21,6 +26,20 @@ export function detectPage(url: string = location.href): PageKind {
   return 'portal';
 }
 
+/**
+ * 结合 DOM 的页面判定。
+ * 实测坑（2026-11-26）：课程页点「开始做题」→ 考试在**新窗口/内嵌层**里打开，
+ * 有的是 `window.open` 后 document.write（`location.href` 仍是 about:blank），
+ * 只按 URL 判断会把考试页当 unknown → 面板只剩设置。所以 DOM 命中直接认。
+ */
+export function detectPageWithDom(url: string = location.href): PageKind {
+  const byUrl = detectPage(url);
+  if (byUrl === 'exam' || byUrl === 'answering') return byUrl;
+  if (hasExamRoot()) return 'exam';
+  if (hasAnswerRoot()) return 'answering';
+  return byUrl;
+}
+
 /** 答题容器存在性（路由命中还不够，DOM 也要对） */
 export function hasAnswerRoot(): boolean {
   return !!(
@@ -31,15 +50,15 @@ export function hasAnswerRoot(): boolean {
   );
 }
 
-export function canStartAnswering(kind: PageKind = detectPage()): boolean {
-  return kind === 'answering';
+export function canStartAnswering(kind: PageKind = detectPageWithDom()): boolean {
+  return kind === 'answering' || kind === 'exam';
 }
 
-/** 监听 SPA 路由变化（hash 路由，popstate + 轮询双保险） */
+/** 监听 SPA 路由变化（hash 路由，popstate + 轮询双保险）；DOM 变化也靠轮询兜住 */
 export function onPageChange(fn: (kind: PageKind) => void): () => void {
-  let last = detectPage();
+  let last = detectPageWithDom();
   const fire = () => {
-    const now = detectPage();
+    const now = detectPageWithDom();
     if (now !== last) {
       last = now;
       fn(now);

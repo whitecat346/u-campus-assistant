@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { getSettings, saveSettings, resetSettings, type Settings } from '../core/settings';
-import { canStartAnswering, detectPage, onPageChange } from '../page/detect';
+import { canStartAnswering, detectPageWithDom, onPageChange } from '../page/detect';
 import { getStatus, onStatus, startEngine, pause, resume, stop, type EngineStatus } from '../engine/machine';
 import { startBatch } from '../engine/batch';
 import { fillExam, submitExam } from '../engine/exam';
-import { examSets } from '../page/exam';
+import { examSets, hasExamFrame } from '../page/exam';
 import { onLog, snapshot, type LogLine } from '../core/log';
 import { cachedUnits } from '../core/api';
 
@@ -70,7 +70,7 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
   }, [pos.x, pos.y]);
 
   // 修复：原来用 useMemo(..., []) 只在挂载时算一次，SPA 内部切题/切页后「当前页面」与按钮可用性不会更新
-  const [page, setPage] = useState(detectPage);
+  const [page, setPage] = useState(detectPageWithDom);
   useEffect(() => onPageChange(setPage), []);
   const canAnswer = !settingsOnly && canStartAnswering(page);
   const running = status.state !== 'idle' && status.state !== 'stopped' && status.state !== 'failed';
@@ -156,6 +156,11 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
               <label>提交策略</label>
               <span className="uc-hint">{settings.submitMode === 'dryRun' ? '只填不交（dry-run）' : '自动提交（说类只出稿，永不提交）'}</span>
             </div>
+            {!isExam && hasExamFrame() && (
+              <div className="uc-hint" style={{ marginTop: 8, lineHeight: 1.6, color: '#1677ff' }}>
+                检测到考试弹窗（内嵌的 uexercise 页面）。考试作答请用**弹窗里**那个「U」按钮打开的面板——跨域框架顶层碰不到。
+              </div>
+            )}
             {isExam && (
               <>
                 <div className="uc-row">

@@ -40,6 +40,14 @@ export function isExamPage(): boolean {
   return isExamHost() && document.querySelectorAll('.itest-ques-set').length > 0;
 }
 
+/**
+ * 课程页里是否嵌了考试框架（ucontent 的「开始做题」会把 uexercise 页装进 iframe/弹层）。
+ * 顶层页面据此提示「去内层面板操作」——跨域 iframe 的 DOM 顶层拿不到。
+ */
+export function hasExamFrame(): boolean {
+  return Array.from(document.querySelectorAll('iframe')).some((f) => /uexercise\.unipus\.cn/.test(f.getAttribute('src') || ''));
+}
+
 function optionLetter(labelText: string, fallbackIndex: number): { letter: string; text: string } {
   const m = labelText.match(/^\s*([A-Z])[.、)]\s*([\s\S]*)$/);
   if (m) return { letter: m[1], text: m[2].replace(/\s+/g, ' ').trim() };

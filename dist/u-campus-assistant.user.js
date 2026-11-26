@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         U校园助手
 // @namespace    https://github.com/whitecat346/u-campus-assistant
-// @version      0.6.10
+// @version      0.6.11
 // @author       whitecat346
 // @description  自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）
 // @icon         https://u.unipus.cn/favicon.ico
@@ -11769,6 +11769,9 @@
 	function navigateToGroup(r) {
 		location.hash = buildAnswerHash(r);
 	}
+	function hasExamRoot() {
+		return document.querySelectorAll(".itest-ques-set").length > 0;
+	}
 	function detectPage(url = location.href) {
 		let u;
 		try {
@@ -11782,13 +11785,23 @@
 		if (u.hostname === "u.unipus.cn" && /\/student\/mycourse\/courseCatalog/.test(u.pathname)) return "catalog";
 		return "portal";
 	}
-	function canStartAnswering(kind = detectPage()) {
-		return kind === "answering";
+	function detectPageWithDom(url = location.href) {
+		const byUrl = detectPage(url);
+		if (byUrl === "exam" || byUrl === "answering") return byUrl;
+		if (hasExamRoot()) return "exam";
+		if (hasAnswerRoot()) return "answering";
+		return byUrl;
+	}
+	function hasAnswerRoot() {
+		return !!(document.querySelector("div[class*=\"questions--question-\"]") || document.querySelector("button[class*=\"submit-bar-pc--btn\"]") || document.querySelector("button.record") || document.querySelector("[class*=\"individualpresentation\"]"));
+	}
+	function canStartAnswering(kind = detectPageWithDom()) {
+		return kind === "answering" || kind === "exam";
 	}
 	function onPageChange(fn) {
-		let last = detectPage();
+		let last = detectPageWithDom();
 		const fire = () => {
-			const now = detectPage();
+			const now = detectPageWithDom();
 			if (now !== last) {
 				last = now;
 				fn(now);
@@ -13224,6 +13237,9 @@
 	function isExamPage() {
 		return isExamHost() && document.querySelectorAll(".itest-ques-set").length > 0;
 	}
+	function hasExamFrame() {
+		return Array.from(document.querySelectorAll("iframe")).some((f) => /uexercise\.unipus\.cn/.test(f.getAttribute("src") || ""));
+	}
 	function optionLetter(labelText, fallbackIndex) {
 		const m = labelText.match(/^\s*([A-Z])[.、)]\s*([\s\S]*)$/);
 		if (m) return {
@@ -13554,7 +13570,7 @@
 				window.removeEventListener("mouseup", onUp);
 			};
 		}, [pos.x, pos.y]);
-		const [page, setPage] = (0, import_react.useState)(detectPage);
+		const [page, setPage] = (0, import_react.useState)(detectPageWithDom);
 		(0, import_react.useEffect)(() => onPageChange(setPage), []);
 		const canAnswer = !settingsOnly && canStartAnswering(page);
 		const running = status.state !== "idle" && status.state !== "stopped" && status.state !== "failed";
@@ -13609,7 +13625,7 @@
 						className: "uc-title",
 						children: ["U校园助手 ", (0, import_jsx_runtime.jsxs)("span", {
 							className: "uc-ver",
-							children: ["v", "0.6.10"]
+							children: ["v", "0.6.11"]
 						})]
 					}), (0, import_jsx_runtime.jsx)("button", {
 						className: "uc-btn",
@@ -13675,6 +13691,15 @@
 								className: "uc-hint",
 								children: settings.submitMode === "dryRun" ? "只填不交（dry-run）" : "自动提交（说类只出稿，永不提交）"
 							})]
+						}),
+						!isExam && hasExamFrame() && (0, import_jsx_runtime.jsx)("div", {
+							className: "uc-hint",
+							style: {
+								marginTop: 8,
+								lineHeight: 1.6,
+								color: "#1677ff"
+							},
+							children: "检测到考试弹窗（内嵌的 uexercise 页面）。考试作答请用**弹窗里**那个「U」按钮打开的面板——跨域框架顶层碰不到。"
 						}),
 						isExam && (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [(0, import_jsx_runtime.jsxs)("div", {
 							className: "uc-row",
@@ -14186,7 +14211,7 @@
 	var HOST_ID = "uc-assistant-host";
 	function App() {
 		const [open, setOpen] = (0, import_react.useState)(false);
-		const [page, setPage] = (0, import_react.useState)(detectPage);
+		const [page, setPage] = (0, import_react.useState)(detectPageWithDom);
 		(0, import_react.useEffect)(() => onPageChange(setPage), []);
 		return (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [(0, import_jsx_runtime.jsx)("button", {
 			className: "uc-launcher",
@@ -14203,7 +14228,7 @@
 		if (document.getElementById(HOST_ID)) return;
 		const host = document.createElement("div");
 		host.id = HOST_ID;
-		host.dataset.ucVersion = "0.6.10";
+		host.dataset.ucVersion = "0.6.11";
 		const shadow = host.attachShadow({ mode: "open" });
 		const style = document.createElement("style");
 		style.textContent = PANEL_CSS;
@@ -14212,7 +14237,7 @@
 		shadow.appendChild(root);
 		document.documentElement.appendChild(host);
 		(0, import_client.createRoot)(root).render((0, import_jsx_runtime.jsx)(App, {}));
-		log(`已注入 ${location.href} (v0.6.10)`);
+		log(`已注入 ${location.href} (v0.6.11)`);
 		window.setTimeout(() => {
 			resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${e.message}`));
 		}, 2500);

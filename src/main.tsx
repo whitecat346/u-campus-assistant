@@ -8,7 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { useEffect, useState } from 'react';
 import { Panel } from './ui/Panel';
 import { PANEL_CSS } from './ui/styles';
-import { detectPage, onPageChange, type PageKind } from './page/detect';
+import { detectPageWithDom, onPageChange, type PageKind } from './page/detect';
 import { log } from './core/log';
 import { resumeBatchIfNeeded } from './engine/batch';
 
@@ -16,7 +16,7 @@ const HOST_ID = 'uc-assistant-host';
 
 function App() {
   const [open, setOpen] = useState(false);
-  const [page, setPage] = useState<PageKind>(detectPage);
+  const [page, setPage] = useState<PageKind>(detectPageWithDom);
 
   useEffect(() => onPageChange(setPage), []);
 

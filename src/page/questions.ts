@@ -203,3 +203,26 @@ export function writingPromptFromContent(content: unknown): string {
   if (qs.length) return qs.join('\n');
   return '';
 }
+
+/* ------------------------- DOM 兜底：直接从页面读题 ------------------------- */
+
+/** 内容没下发（或还没渲染）时，从 DOM 的 radio 结构拼出题目 */
+export function questionsFromDom(): Question[] {
+  const out: Question[] = [];
+  const names = new Set<string>();
+  document.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach((r) => names.add(r.name));
+  [...names].forEach((name, i) => {
+    const radios = Array.from(document.querySelectorAll<HTMLInputElement>(`input[type=radio][name="${name}"]`));
+    const scope = (radios[0]?.closest('div[class*="questions--question-"], li, section') ?? document.body) as HTMLElement;
+    const stem = scope.innerText.split('\n')[0]?.trim() ?? '';
+    out.push({
+      index: i,
+      stem,
+      options: radios.map((r) => {
+        const label = (r.closest('label') ?? r.parentElement) as HTMLElement | null;
+        return { caption: r.value, label: (label?.innerText ?? '').replace(/^[A-Z][.、]\s*/, '').trim() };
+      }),
+    });
+  });
+  return out;
+}

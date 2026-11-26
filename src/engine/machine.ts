@@ -9,10 +9,10 @@ import {
   audioUrlFromContent,
   detectTaskKind,
   questionsFromContent,
+  questionsFromDom,
   speakingPromptText,
   transcriptFromContent,
   unansweredGroups,
-  type Question,
   type TaskKind,
 } from '../page/questions';
 import { submitCurrentGroup } from '../page/submit';
@@ -90,28 +90,6 @@ export function jitter(min = getSettings().delayMinMs, max = getSettings().delay
 }
 
 const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
-
-/* --------------------------- DOM 兜底题目解析 --------------------------- */
-
-function questionsFromDom(): Question[] {
-  const out: Question[] = [];
-  const names = new Set<string>();
-  document.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach((r) => names.add(r.name));
-  [...names].forEach((name, i) => {
-    const radios = Array.from(document.querySelectorAll<HTMLInputElement>(`input[type=radio][name="${name}"]`));
-    const scope = radios[0]?.closest('div[class*="questions--question-"], li, section') ?? document.body;
-    const stem = (scope as HTMLElement).innerText.split('\n')[0]?.trim() ?? '';
-    out.push({
-      index: i,
-      stem,
-      options: radios.map((r) => {
-        const label = (r.closest('label') ?? r.parentElement) as HTMLElement | null;
-        return { caption: r.value, label: (label?.innerText ?? '').replace(/^[A-Z][.、]\s*/, '').trim() };
-      }),
-    });
-  });
-  return out;
-}
 
 /* ------------------------------ 单 group 流程 ------------------------------ */
 

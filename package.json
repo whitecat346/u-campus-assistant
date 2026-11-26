@@ -1,7 +1,7 @@
 {
   "name": "u-campus-userscript",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "description": "Tampermonkey userscript that automates U校园 (u.unipus.cn) coursework",
   "scripts": {

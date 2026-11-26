@@ -27,6 +27,7 @@ import {
   audioUrlFromContent,
   fillTextArea,
   questionsFromContent,
+  questionsFromDom,
   speakingPromptText,
   textInputs,
   transcriptFromContent,
@@ -266,15 +267,23 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
           continue;
         }
 
-        // 听力 / 客观题
-        const questions = content ? questionsFromContent(content) : [];
+        // 听力 / 客观题：页面常先渲染播放器、后渲染选项，先给 12 秒等题目出现
+        let ctx = content;
+        let questions = ctx ? questionsFromContent(ctx) : [];
+        for (let t = 0; t < 40 && !questions.length; t++) {
+          await sleep(300);
+          assertRunning();
+          ctx = latestQuestionsContent() ?? ctx;
+          questions = ctx ? questionsFromContent(ctx) : [];
+          if (!questions.length) questions = questionsFromDom();
+        }
         if (!questions.length) {
-          log('未解析到题目，跳过');
+          log('等待 12 秒仍未拿到题目，跳过');
           failed.push(it.group);
           continue;
         }
-        const transcript = content ? transcriptFromContent(content) : '';
-        const audioUrl = content ? audioUrlFromContent(content) : null;
+        const transcript = ctx ? transcriptFromContent(ctx) : '';
+        const audioUrl = ctx ? audioUrlFromContent(ctx) : (document.querySelector('audio') as HTMLAudioElement | null)?.currentSrc ?? null;
         const judged = await judgeObjective({ transcript, audioUrl, questions });
         assertRunning();
         const filled = applyChoices(judged.answers);

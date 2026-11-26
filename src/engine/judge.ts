@@ -229,16 +229,29 @@ export function parseBlanks(raw: string, count: number): BlankJudgeResult {
 export type ScriptMode = 'speech' | 'readaloud' | 'dialogue' | 'essay';
 
 const SPEECH_SYS = [
-  '你是英语口语考试教练，替一名非英语专业的大一学生写一篇可以直接朗读的发言稿。',
+  '场景：中国大学英语听说课的课堂口语环节。老师抛出问题，学生当场口头回答，说完就结束，不是演讲、不是讲故事、不是写作文。',
   '写作要求：',
-  '1) 第一句就用一个具体的场景或问题开头（例如 "Last week I noticed ..."），不要空泛表态，不要复述题目；',
-  '2) 中间讲 2 个理由，每个理由配一个具体的小例子（可以是自己的生活经验，具体到时间、地点、人物）；',
-  '3) 最后一句给出一句简短的总结或建议，收住，不要 "Thank you for listening"；',
-  '4) 语言水平按大学英语四级：常用词、短句、可以有缩写（I\'ve、don\'t），避免高级词汇和复杂从句；',
-  '5) 通篇可以朗读：只有段落，不要标题、不要序号、不要项目符号、不要括号注释、不要 markdown；',
-  '6) 长度按后端给的词数上限控制，宁短勿长。',
+  '1) 开门见山直接回应问题本身：第一句就给出你的观点/答案（例如 "Personally, social media does affect my sleep."），不要用叙事开场，不要描述"昨晚我室友给我看了一张图"这类小故事；',
+  '2) 每个理由只给一句解释 + 最多一句简短例证（可以提自己的情况，但一句话带过，不许展开成情节）；',
+  '3) 用课堂口语常见的连接词（First / Besides / For example / So），句子短，允许缩写（I\'ve、don\'t），四级词汇水平；',
+  '4) 如果题目里有多个分问（1. 2. 3. 或两三个问句），必须逐条回答、顺序与题号一致：每条独立成段，段首用 "First," / "As for the second question," / "Finally," 这类提示语，让听者知道你换到下一个问题了；不许把所有分问揉成一段故事；',
+  '5) 结尾一句话收住（可以是态度或建议），不要 "Thank you for listening"；',
+  '6) 只有段落，不要标题、不要序号、不要项目符号、不要括号注释、不要 markdown；总长度不超过后端给的词数。',
   '只输出英文正文，不要任何解释。',
 ].join('\n');
+
+/** 从页面文本里抽出「1. xxx / 2. xxx」形式的分问（说类题常常是 2–3 小问） */
+export function extractSubQuestions(text: string): string[] {
+  const out: string[] = [];
+  const re = /(?:^|\n)\s*(?:\d{1,2}[.)、]|Q\d+[.:)])\s*([^\n]{6,300})/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const q = m[1].replace(/\s+/g, ' ').trim();
+    if (q && !/^[\d\s.)、]*$/.test(q)) out.push(q);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
 
 const READALOUD_SYS = [
   '你是英语朗读任务助手。题目给出一段英文材料（句子或短文），学生需要跟着朗读。',
@@ -273,6 +286,13 @@ const ESSAY_SYS = [
 export async function draftSpeakingScript(promptText: string, targetSec = 75, mode: ScriptMode = 'speech'): Promise<string> {
   const words = Math.round((targetSec / 60) * 110);
   const sys = mode === 'readaloud' ? READALOUD_SYS : mode === 'dialogue' ? DIALOGUE_SYS : mode === 'essay' ? ESSAY_SYS : SPEECH_SYS;
+  const subs = mode === 'speech' ? extractSubQuestions(promptText) : [];
+  const subHint =
+    subs.length >= 2
+      ? `\n\n页面上的分问共 ${subs.length} 条（必须逐条回答、顺序一致、每问一段）：\n${subs
+          .map((q, i) => `${i + 1}) ${q}`)
+          .join('\n')}\n输出必须是 ${subs.length} 段，每段回答一个分问。`
+      : '';
   const ask =
     mode === 'readaloud'
       ? `下面是页面给出的朗读材料：\n${promptText.slice(0, 4000)}\n\n请输出可直接朗读的英文稿。`
@@ -280,7 +300,8 @@ export async function draftSpeakingScript(promptText: string, targetSec = 75, mo
         ? `下面是题目要求：\n${promptText.slice(0, 4000)}\n\n请输出 A / B 对话稿。`
         : mode === 'essay'
           ? `题目要求与提示如下：\n${promptText.slice(0, 4000)}\n\n写一段 120–180 词的书面英语。只输出英文正文。`
-          : `题目要求与提示如下：\n${promptText.slice(0, 4000)}\n\n目标时长约 ${targetSec} 秒，正文不超过 ${words} 词。只输出英文稿正文。`;
+          : `课堂问题如下：\n${promptText.slice(0, 4000)}${subHint}\n\n请以学生当堂回答的口吻作答，总长度不超过 ${words} 词。只输出英文回答正文。`;
+  if (subs.length >= 2) log(`说类题目识别到 ${subs.length} 个分问，要求逐条回答`);
   const raw = await chat(
     [
       { role: 'system', content: sys },

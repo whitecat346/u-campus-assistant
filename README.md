@@ -33,7 +33,9 @@
 2. 点这个链接装脚本（jsDelivr CDN，国内可达；GitHub 直链 `raw.githubusercontent.com` 在部分网络下 DNS 不通）：
 
    ```
-   https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js
+   https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.2/dist/u-campus-assistant.user.js
+
+   > 链接里的 @v版本号 请对照 [Tags](https://github.com/whitecat346/u-campus-assistant/tags) 换成最新版；@main 的 CDN 缓存会滞后，不建议用。
    ```
 
    或者把仓库里的 `dist/u-campus-assistant.user.js` 下载下来拖进浏览器窗口，Tampermonkey 会弹出安装页。
@@ -116,7 +118,7 @@ npm run typecheck
 发布新版本：`npm version <x.y.z>` → `npm run build` → commit → `git push` → 打 tag → 清 CDN 缓存：
 
 ```
-node -e "fetch('https://purge.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js').then(r=>r.text()).then(console.log)"
+node -e "fetch('https://purge.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.2/dist/u-campus-assistant.user.js').then(r=>r.text()).then(console.log)"
 ```
 
 ## 常见问题

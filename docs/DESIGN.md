@@ -134,7 +134,7 @@ idle → planning(拉课程/单元清单) → unit_open(进入小节)
 ## 11. MCP 接入（重启会话前必须做）
 
 1. Edge 打开 `edge://inspect` → 左侧「远程调试」→ 勾选「允许远程调试此浏览器实例」（Edge 会写 `DevToolsActivePort`）。
-2. DSH profile `C:\Users\WhiteCAT\.dsh\profiles\desktop\cordis.patch.yml` 追加第二个 `insert` 块（见根 `README.md`）。
+2. DSH profile `<%USERPROFILE%>\.dsh\profiles\desktop\cordis.patch.yml` 追加第二个 `insert` 块（见根 `README.md`）。
 3. 重启 DSH 会话；之后所有浏览器操作通过该 MCP 完成。
 
 ## 12. 验收（M0）
@@ -142,3 +142,4 @@ idle → planning(拉课程/单元清单) → unit_open(进入小节)
 - [x] 设计文档落盘，决策表含 16 条
 - [x] `userscript/` 与 `server/` 各自 `git init` 且有首次提交
 - [ ] MCP 配置写入 profile 并重启（等用户执行）
+

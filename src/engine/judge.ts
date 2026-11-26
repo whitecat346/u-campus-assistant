@@ -60,15 +60,34 @@ export async function judgeObjective(input: JudgeInput): Promise<JudgeResult> {
     .filter(Boolean)
     .join('\n\n');
 
-  const raw = await chat(
-    [
-      { role: 'system', content: SYS },
-      { role: 'user', content: user },
-    ],
-    { temperature: 0.1, maxTokens: 2400 },
-  );
+  const call = (extra: string) =>
+    chat(
+      [
+        { role: 'system', content: SYS },
+        { role: 'user', content: user + extra },
+      ],
+      { temperature: 0.1, maxTokens: 2400 },
+    );
 
-  return parseJudge(raw, input.questions.length);
+  let raw = await call('');
+  let result = parseJudge(raw, input.questions.length);
+
+  // 实测问题：模型偶尔少给几题（思考模型尤甚）→ 对缺的题再要一次，避免页面留空
+  for (let round = 0; round < 2; round++) {
+    const missing = input.questions.map((q) => q.index).filter((i) => !(i in result.answers));
+    if (!missing.length) break;
+    log(`判题缺少第 ${missing.map((i) => i + 1).join(',')} 题的答案，补问一次`);
+    const askMissing = `\n\n上一次只给了部分答案，请补齐这些题：${missing.map((i) => i + 1).join(',')}，仍然只输出完整 JSON。`;
+    raw = await call(askMissing);
+    const more = parseJudge(raw, input.questions.length);
+    result = {
+      answers: { ...result.answers, ...more.answers },
+      confidence: Math.min(result.confidence, more.confidence),
+      note: more.note ?? result.note,
+    };
+  }
+
+  return result;
 }
 
 export function parseJudge(raw: string, count: number): JudgeResult {

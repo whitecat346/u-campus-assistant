@@ -163,46 +163,45 @@ export async function fetchGroupMeta(courseId: string, groupId: string): Promise
   return JSON.parse(r.group) as GroupMeta;
 }
 
-/** 把课程树摊平成「可作答单元」列表：unit → node → node → group(base) */
+/** 把课程树摊平成「可作答单元」列表：unit → node* → group(base) */
 export interface CourseItem {
   unit: string;
   unitName: string;
-  node: string;
-  nodeName: string;
-  path: string[];
+  /** 中间容器 id（可 1..n 层，原样拼回 hash） */
+  nodes: string[];
+  /** 真正的 group id（进度 leaf 的键） */
   group: string;
   base: string;
   tabType: string;
   name: string;
+  nodeName: string;
+  /** 兼容旧字段：hash 里 group 之前的所有 id */
+  path: string[];
 }
 
 export function flattenCourse(tree: CourseTree): CourseItem[] {
   const out: CourseItem[] = [];
-  const walk = (unit: string, unitName: string, path: string[], nodeNames: string[], node: CourseNode, isUnit = false): void => {
+  const walk = (unit: string, unitName: string, nodes: string[], names: string[], node: CourseNode): void => {
     const kids = node.children ?? [];
-    if (!isUnit && (node.base || !kids.length)) {
-      // 终点：group（有 base）或没有子节点的节点
-      if (path.length >= 3) {
-        out.push({
-          unit,
-          unitName,
-          node: path[0] ?? unit,
-          nodeName: nodeNames[0] ?? '',
-          path: [...path],
-          group: node.url,
-          base: node.base ?? '',
-          tabType: node.tab_type ?? '',
-          name: node.name,
-        });
-      }
+    const isGroup = !!node.base || kids.length === 0;
+    if (isGroup) {
+      out.push({
+        unit,
+        unitName,
+        nodes: [...nodes],
+        group: node.url,
+        base: node.base ?? '',
+        tabType: node.tab_type ?? '',
+        name: node.name,
+        nodeName: names[0] ?? '',
+        path: [...nodes],
+      });
       return;
     }
-    const nextPath = isUnit ? path : [...path, node.url];
-    const nextNames = isUnit ? nodeNames : [...nodeNames, node.name];
-    for (const k of kids) walk(unit, unitName, nextPath, nextNames, k);
+    for (const k of kids) walk(unit, unitName, [...nodes, node.url], [...names, node.name], k);
   };
   for (const unit of tree.units ?? []) {
-    // 单元 → 其每个子节点走一遍（unit 自身不进 path）
+    // 实测结构：unit → 容器 → 容器 → group（hash 里 4 段 id）
     for (const child of unit.children ?? []) {
       walk(unit.url, unit.name, [], [], child);
     }
@@ -210,15 +209,13 @@ export function flattenCourse(tree: CourseTree): CourseItem[] {
   return out;
 }
 
-/** 由 CourseItem 生成 hash（unit/node/node/group → 实测就是这四段） */
+/** 由 CourseItem 生成 hash（unit + 中间容器 + group，最后拼 p_1） */
 export function itemToRoute(item: CourseItem, courseId: string): AnswerPageRoute {
-  const seg = item.path.slice(0, 3);
   return {
     courseId,
     unit: item.unit,
-    node: seg[0] ?? item.unit,
-    group: seg[1] ?? item.group,
-    child: seg[2] ?? item.group,
+    nodes: [...item.nodes],
+    group: item.group,
     page: 'p_1',
   };
 }
@@ -228,23 +225,37 @@ export function itemToRoute(item: CourseItem, courseId: string): AnswerPageRoute
 export interface AnswerPageRoute {
   courseId: string;
   unit: string;
-  node: string;
+  /** group 之前的容器 id（实测 1–2 层：u4g276/u4g277） */
+  nodes: string[];
+  /** 最后一个 id 才是真正的 group（进度 leaf 的键） */
   group: string;
-  child: string;
   page: string;
 }
 
-/** 解析 hash： #/<courseId>/courseware/<unit>/<node>/<group>/<child>/p_<n> */
+/** 解析 hash： #/<courseId>/courseware/<unit>/<node...>/<group>/p_<n> */
 export function parseAnswerRoute(href = location.href): AnswerPageRoute | null {
   const hash = href.includes('#') ? href.slice(href.indexOf('#') + 1) : '';
-  const m = hash.match(/^\/([^/]+)\/courseware\/([^/]+)\/([^/]+)\/([^/?#]+)(?:\/([^/?#]+))?(?:\/(p_\d+))?/);
-  if (!m) return null;
-  return { courseId: m[1], unit: m[2], node: m[3], group: m[4], child: m[5] || '', page: m[6] || 'p_1' };
+  const parts = hash.split('/').filter(Boolean);
+  const idx = parts.indexOf('courseware');
+  if (idx <= 0) return null;
+  const courseId = parts[idx - 1];
+  const rest = parts.slice(idx + 1);
+  const pageIdx = rest.findIndex((p) => /^p_\d+$/.test(p));
+  const ids = pageIdx >= 0 ? rest.slice(0, pageIdx) : rest;
+  const page = pageIdx >= 0 ? rest[pageIdx] : 'p_1';
+  if (ids.length < 2) return null;
+  return {
+    courseId,
+    unit: ids[0],
+    nodes: ids.slice(1, -1),
+    group: ids[ids.length - 1],
+    page,
+  };
 }
 
 export function buildAnswerHash(r: AnswerPageRoute): string {
-  const tail = r.child ? `/${r.child}` : '';
-  return `#/${r.courseId}/courseware/${r.unit}/${r.node}/${r.group}${tail}/${r.page}`;
+  const ids = [r.unit, ...r.nodes, r.group].filter(Boolean);
+  return `#/${r.courseId}/courseware/${ids.join('/')}/${r.page}`;
 }
 
 /** 直接在 SPA 内跳转到某个 group（实测：整页 navigate 会被弹回目录，hash 变更可用） */

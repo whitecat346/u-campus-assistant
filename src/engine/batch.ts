@@ -40,7 +40,7 @@ import {
   type TaskKind,
 } from '../page/questions';
 import { submitCurrentGroup } from '../page/submit';
-import { draftSpeakingScript, judgeBlanks, judgeObjective } from './judge';
+import { draftSpeakingScript, judgeBlanks, judgeObjective, type ScriptMode } from './judge';
 import { assertRunning, getStatus, setStatus, StopSignal, PauseSignal } from './machine';
 
 const DONE_KEY = 'uc.batch.done';
@@ -211,6 +211,9 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
       setStatus({
         batch: { total: plan.length, index: i + 1, done: handled, current: `${it.unitName} / ${it.name}` },
         group: it.group,
+        // 每换一题都清空上一题的题型与短稿，避免「重复进入说类题面板不刷新」
+        kind: undefined,
+        script: undefined,
       });
 
       const kindOf = kindOfBase(it.base);
@@ -295,11 +298,18 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
 
         if (kind === 'speaking') {
           const prompt = writingPromptFromContent(content) || (content ? transcriptFromContent(content) : '') || speakingPromptText();
-          const text = await draftSpeakingScript(prompt, settings.speaking.targetSec);
+          // 跟读（sentencerecord/readaloud）要"照读原句"，角色扮演要"两人对话"，其余是自由发言
+          const mode: ScriptMode = /sentencerecord|readaloud/i.test(it.base)
+            ? 'readaloud'
+            : /roleplay|rolechoose/i.test(it.base)
+              ? 'dialogue'
+              : 'speech';
+          const text = await draftSpeakingScript(prompt, settings.speaking.targetSec, mode);
           assertRunning();
           scripts.push({ group: it.group, name: `${it.unitName} / ${it.name}`, text });
-          setStatus({ scripts: [...scripts] });
-          log(`说类：已生成短稿（${text.split(/\s+/).length} 词），不录音不提交`);
+          // 关键：script 与 kind 一起刷新，否则重复进入说类题时面板一直显示上一稿
+          setStatus({ kind: 'speaking', script: text, scripts: [...scripts] });
+          log(`说类（${mode}）：已生成短稿（${text.split(/\s+/).length} 词），不录音不提交`);
           markDone(courseId, it.group);
           skipped += 1;
           continue;
@@ -307,14 +317,17 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
 
         if (kind === 'writing') {
           const prompt = writingPromptFromContent(content) || speakingPromptText();
-          const text = await draftSpeakingScript(prompt, Math.max(60, settings.speaking.targetSec));
+          const text = await draftSpeakingScript(prompt, Math.max(60, settings.speaking.targetSec), 'essay');
           assertRunning();
+          setStatus({ kind: 'writing', script: text });
           const target = textInputs()[0];
           if (target && fillTextArea(target, text)) {
             handled += 1;
             if (settings.submitMode === 'auto') {
               const outcome = await submitCurrentGroup(true);
               log(`写作提交：${outcome.submitted ? '成功' : `未完成（${outcome.message ?? ''}）`}`);
+              if (outcome.submitted) markDone(courseId, it.group);
+              else failed.push(it.group);
             } else {
               log('dry-run：写作内容已填入，未提交');
             }

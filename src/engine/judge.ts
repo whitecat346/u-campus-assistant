@@ -21,10 +21,15 @@ export interface JudgeResult {
 }
 
 const SYS = [
-  '你是英语听力题的答题助手。根据听力原文与题干、选项，为每题选出唯一正确答案。',
-  '要求：只依据原文信息作答；原文没有直接证据时按最可能选项判断并把 confidence 降低。',
+  '你是一位英语听力命题专家，正在替中国大学生做「大学英语听说」课的选择题。',
+  '作答方法：',
+  '1) 先通读听力原文，把与题干相关的句子逐句对照四个选项；',
+  '2) 正确项必须能在原文找到直接依据（同义改写也算），与原文矛盾或原文未提及的选项一律排除；',
+  '3) 涉及数字、时间、地点、原因、态度时，务必回原文核对，不要凭常识脑补；',
+  '4) 原文来自语音识别时可能有错词，请按上下文纠正后再判断。',
+  '没有原文时，只能依据题干与选项的语义常识选最合理的一项，并把 confidence 压到 0.4 以下。',
   '必须严格输出 JSON：{"letters":["A","C","B"],"confidence":0.0-1.0,"note":"简短理由"}',
-  'letters 是按题目顺序排列的选项字母数组，**长度必须等于题目数量**，一个都不能省；不确定也要给一个。',
+  'letters 是按题目顺序排列的选项字母数组，长度必须等于题目数量，一个都不能省；不确定也要给一个。不要输出任何多余文字。',
 ].join('\n');
 
 export async function resolveTranscript(input: JudgeInput): Promise<{ text: string; source: 'page' | 'asr' | 'none' }> {
@@ -136,10 +141,14 @@ export interface BlankJudgeResult {
 }
 
 const BLANK_SYS = [
-  '你是英语听力填空助手。给定听力原文和若干带编号空格的句子，请用原文里出现的词/短语填空。',
-  '要求：每空只填原文中真实出现的词（1–4 个词），保持原形，不加标点；空格处应为原文对应位置的词。',
+  '你是一位英语听力填空专家，正在替中国大学生填「听录音补全句子」的空。',
+  '作答方法：',
+  '1) 先按空位编号在听力原文里定位对应位置，再抄出原文中的那个词或短语；',
+  '2) 每空只填 1–4 个词，保持原文的词形（含单复数、时态、连字符），不加标点、不加引号、不改写；',
+  '3) 若原文中找不到确切位置，就按句子语法与语义给出最可能的原文式表达，并把 confidence 压低；',
+  '4) 空位顺序与句子里的编号一致，不要跳号、不要重复填同一空。',
   '必须严格输出 JSON：{"words":["词1","词2"],"confidence":0.0-1.0,"note":"简短理由"}',
-  'words 按空位编号顺序排列，**长度必须等于空位数量**，一个都不能省。',
+  'words 按空位编号顺序排列，长度必须等于空位数量，一个都不能省。不要输出任何多余文字。',
 ].join('\n');
 
 export async function judgeBlanks(input: {
@@ -216,25 +225,71 @@ export function parseBlanks(raw: string, count: number): BlankJudgeResult {
 
 /* ------------------------------ 说：短稿生成 ------------------------------ */
 
-const SPEAK_SYS = [
-  '你帮学生准备英语口语题的发言稿。要求：',
-  '1) 直接给出可朗读书面稿，不要解释、不要项目符号；',
-  '2) 长度控制在 60–90 秒口语量（约 90–140 词）；',
-  '3) 语言自然、口语化，用简单句，适用于中国大学英语课堂；',
-  '4) 内容紧扣题目要求与页面给出的提示要点。',
+/** 说类任务的三种形态（由 base 决定）+ 写作 */
+export type ScriptMode = 'speech' | 'readaloud' | 'dialogue' | 'essay';
+
+const SPEECH_SYS = [
+  '你是英语口语考试教练，替一名非英语专业的大一学生写一篇可以直接朗读的发言稿。',
+  '写作要求：',
+  '1) 第一句就用一个具体的场景或问题开头（例如 "Last week I noticed ..."），不要空泛表态，不要复述题目；',
+  '2) 中间讲 2 个理由，每个理由配一个具体的小例子（可以是自己的生活经验，具体到时间、地点、人物）；',
+  '3) 最后一句给出一句简短的总结或建议，收住，不要 "Thank you for listening"；',
+  '4) 语言水平按大学英语四级：常用词、短句、可以有缩写（I\'ve、don\'t），避免高级词汇和复杂从句；',
+  '5) 通篇可以朗读：只有段落，不要标题、不要序号、不要项目符号、不要括号注释、不要 markdown；',
+  '6) 长度按后端给的词数上限控制，宁短勿长。',
+  '只输出英文正文，不要任何解释。',
 ].join('\n');
 
-export async function draftSpeakingScript(promptText: string, targetSec = 75): Promise<string> {
+const READALOUD_SYS = [
+  '你是英语朗读任务助手。题目给出一段英文材料（句子或短文），学生需要跟着朗读。',
+  '要求：',
+  '1) 把材料整理成可直接朗读的稿子：保留原句措辞，去掉题号、"Read aloud" 之类的说明、括号提示和中文注释；',
+  '2) 一句一行，标点补全，不要改写、不要翻译、不要加自己的话；',
+  '3) 如果材料本身不完整，只按能读出来的部分整理，不要编造。',
+  '只输出英文正文，不要任何解释。',
+].join('\n');
+
+const DIALOGUE_SYS = [
+  '你是英语口语对话教练。题目是两人角色扮演（role-play），学生只负责其中一方。',
+  '要求：',
+  '1) 输出 A / B 两人的对话稿，每行以 "A: " 或 "B: " 开头，共 6–10 行；',
+  '2) 覆盖题目要求的全部要点，用自然的日常口语，句子短，可以有重复和语气词；',
+  '3) 学生要念的那一方（通常是角色 A，若题目另有说明按题目）台词要更完整、能独立成段；',
+  '4) 不要标题、不要说明、不要 markdown。',
+  '只输出英文对话。',
+].join('\n');
+
+const ESSAY_SYS = [
+  '你是英语写作辅导老师，替一名非英语专业的大一学生完成课程里的书面写作/简答题。',
+  '写作要求：',
+  '1) 先直接回应题目要求（立场/做法/观点），不要复述题目；',
+  '2) 主体 2 段：每段一个要点，配一个具体例子或细节；',
+  '3) 结尾一句结论，不写 "In conclusion" 之类套话也可以，但要有收束；',
+  '4) 语言按四级水平，语法正确、句子清楚，避免生僻词；',
+  '5) 只有段落，不要标题、序号、项目符号、markdown；长度 120–180 词。',
+  '只输出英文正文，不要任何解释。',
+].join('\n');
+
+export async function draftSpeakingScript(promptText: string, targetSec = 75, mode: ScriptMode = 'speech'): Promise<string> {
   const words = Math.round((targetSec / 60) * 110);
+  const sys = mode === 'readaloud' ? READALOUD_SYS : mode === 'dialogue' ? DIALOGUE_SYS : mode === 'essay' ? ESSAY_SYS : SPEECH_SYS;
+  const ask =
+    mode === 'readaloud'
+      ? `下面是页面给出的朗读材料：\n${promptText.slice(0, 4000)}\n\n请输出可直接朗读的英文稿。`
+      : mode === 'dialogue'
+        ? `下面是题目要求：\n${promptText.slice(0, 4000)}\n\n请输出 A / B 对话稿。`
+        : mode === 'essay'
+          ? `题目要求与提示如下：\n${promptText.slice(0, 4000)}\n\n写一段 120–180 词的书面英语。只输出英文正文。`
+          : `题目要求与提示如下：\n${promptText.slice(0, 4000)}\n\n目标时长约 ${targetSec} 秒，正文不超过 ${words} 词。只输出英文稿正文。`;
   const raw = await chat(
     [
-      { role: 'system', content: SPEAK_SYS },
-      {
-        role: 'user',
-        content: `目标时长约 ${targetSec} 秒（约 ${words} 词）。题目与提示如下：\n${promptText.slice(0, 4000)}\n\n只输出英文稿正文。`,
-      },
+      { role: 'system', content: sys },
+      { role: 'user', content: ask },
     ],
-    { temperature: 0.6, maxTokens: 2400 },
+    { temperature: 0.5, maxTokens: 2400 },
   );
-  return stripFence(raw).replace(/^["']|["']$/g, '').trim();
+  return stripFence(raw)
+    .replace(/^["']|["']$/g, '')
+    .replace(/\r\n/g, '\n')
+    .trim();
 }

@@ -29,7 +29,9 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   scope: 'required',
-  submitMode: 'dryRun',
+  // 2026-11-26 用户决定：u4 已零失败，听力/填空改为默认自动提交。
+  // 说类永远不提交（决策 10），所以「自动提交」不影响口语。
+  submitMode: 'auto',
   delayMinMs: 3000,
   delayMaxMs: 8000,
   llm: { enabled: true, baseURL: '', model: '', apiKey: '' },
@@ -63,10 +65,18 @@ function merge(base: Settings, patch: Partial<Settings>): Settings {
 
 let cache: Settings | null = null;
 
+/** 一次性迁移：老用户存的是 dryRun，用户已明确要求改默认自动提交 */
+const MIGRATE_AUTO = 'uc.setting.migrate.autoSubmit';
+
 export function getSettings(): Settings {
   if (!cache) {
     const stored = GM_getValue<Partial<Settings> | null>(KEY, null);
     cache = merge(DEFAULT_SETTINGS, stored ?? {});
+    if (!GM_getValue<boolean>(MIGRATE_AUTO, false)) {
+      GM_setValue(MIGRATE_AUTO, true);
+      cache = { ...cache, submitMode: 'auto' };
+      if (stored) GM_setValue(KEY, cache);
+    }
   }
   return cache;
 }

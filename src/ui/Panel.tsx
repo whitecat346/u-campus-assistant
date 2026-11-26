@@ -18,6 +18,7 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
   const [settings, setSettings] = useState<Settings>(getSettings);
   const [status, setStatus] = useState<EngineStatus>(getStatus);
   const [lines, setLines] = useState<LogLine[]>(snapshot);
+  const [copied, setCopied] = useState('');
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
     const s = getSettings().ui;
     return {
@@ -120,7 +121,7 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
             </div>
             <div className="uc-row">
               <label>提交策略</label>
-              <span className="uc-hint">{settings.submitMode === 'dryRun' ? '只填不交（dry-run）' : '自动提交'}</span>
+              <span className="uc-hint">{settings.submitMode === 'dryRun' ? '只填不交（dry-run）' : '自动提交（说类只出稿，永不提交）'}</span>
             </div>
             {status.batch && (
               <>
@@ -145,43 +146,71 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
               </div>
             )}
             {status.script && (
-              <div style={{ marginTop: 8 }}>
-                <div className="uc-hint" style={{ marginBottom: 4 }}>
-                  短稿（自己读，脚本不会提交口语）
+              <div className="uc-script-box">
+                <div className="uc-script-head">
+                  <span>说类短稿（自己读，脚本不会提交口语）</span>
+                  <span className="uc-hint">{status.script.trim().split(/\s+/).length} 词</span>
                 </div>
-                <div className="uc-log" style={{ maxHeight: 150 }}>
-                  {status.script}
+                <div className="uc-script">{status.script}</div>
+                <div className="uc-script-actions">
+                  <button
+                    className="uc-btn"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(status.script ?? '');
+                      setCopied('script');
+                      window.setTimeout(() => setCopied(''), 1200);
+                    }}
+                  >
+                    {copied === 'script' ? '已复制' : '复制短稿'}
+                  </button>
+                  <button
+                    className="uc-btn"
+                    onClick={() => {
+                      const el = document.createElement('textarea');
+                      el.value = status.script ?? '';
+                      document.body.appendChild(el);
+                      el.select();
+                      document.execCommand('copy');
+                      el.remove();
+                      setCopied('script');
+                      window.setTimeout(() => setCopied(''), 1200);
+                    }}
+                    title="剪贴板 API 被拒时用这个"
+                  >
+                    复制（兼容）
+                  </button>
                 </div>
-                <button
-                  className="uc-btn"
-                  style={{ marginTop: 6 }}
-                  onClick={() => void navigator.clipboard.writeText(status.script ?? '')}
-                >
-                  复制短稿
-                </button>
               </div>
             )}
             {status.scripts && status.scripts.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <div className="uc-hint" style={{ marginBottom: 4 }}>
-                  说类短稿（共 {status.scripts.length} 条，自己读、自己交）
+              <div className="uc-script-box">
+                <div className="uc-script-head">
+                  <span>说类短稿（共 {status.scripts.length} 条，自己读、自己交）</span>
                 </div>
-                <div className="uc-log" style={{ maxHeight: 160 }}>
-                  {status.scripts
-                    .map((s, i) => `#${i + 1} ${s.name}\n${s.text}`)
-                    .join('\n\n')}
+                <div className="uc-script-list">
+                  {status.scripts.map((s, i) => (
+                    <div className="uc-script-item" key={`${s.group}-${i}`}>
+                      <div className="uc-script-name">
+                        #{i + 1} {s.name}
+                      </div>
+                      <div className="uc-script">{s.text}</div>
+                    </div>
+                  ))}
                 </div>
-                <button
-                  className="uc-btn"
-                  style={{ marginTop: 6 }}
-                  onClick={() =>
-                    void navigator.clipboard.writeText(
-                      (status.scripts ?? []).map((s, i) => `#${i + 1} ${s.name}\n${s.text}`).join('\n\n'),
-                    )
-                  }
-                >
-                  复制全部短稿
-                </button>
+                <div className="uc-script-actions">
+                  <button
+                    className="uc-btn"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(
+                        (status.scripts ?? []).map((s, i) => `#${i + 1} ${s.name}\n${s.text}`).join('\n\n'),
+                      );
+                      setCopied('all');
+                      window.setTimeout(() => setCopied(''), 1200);
+                    }}
+                  >
+                    {copied === 'all' ? '已复制' : '复制全部短稿'}
+                  </button>
+                </div>
               </div>
             )}
             {!canAnswer && <div className="uc-hint" style={{ marginTop: 8 }}>当前不是答题页面，「开始作答」已禁用。</div>}

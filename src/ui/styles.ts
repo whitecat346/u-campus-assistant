@@ -42,5 +42,25 @@ export const PANEL_CSS = `
 .uc-btn.primary { background: #3b5bff; border-color: #3b5bff; color: #fff; font-weight: 600; }
 .uc-btn.danger { background: #fff1f0; border-color: #ffc9c4; color: #d4380d; }
 .uc-btn:disabled { opacity: .45; cursor: not-allowed; }
-.uc-log { font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: #55607a; }
+.uc-log { font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: #55607a; max-height: 46vh; overflow: auto; }
+
+/* 说类短稿：独立滚动区，按词换行（不再用 break-all 把单词劈开），按钮单独占一行不压正文 */
+.uc-script-box { margin-top: 10px; border: 1px solid #e6eaf3; border-radius: 8px; background: #fbfcff; overflow: hidden; }
+.uc-script-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 10px; font-size: 12px; color: #5b6478;
+  background: #f1f5ff; border-bottom: 1px solid #e6eaf3;
+}
+.uc-script-list { max-height: 40vh; overflow: auto; }
+.uc-script-item + .uc-script-item { border-top: 1px dashed #e6eaf3; }
+.uc-script-name { padding: 7px 10px 0; font-size: 12px; color: #8a93a6; }
+.uc-script {
+  padding: 8px 10px; font-size: 13.5px; line-height: 1.75; color: #1c2233;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; hyphens: none;
+  max-height: 32vh; overflow: auto;
+  font-family: Georgia, "Times New Roman", "Microsoft YaHei", serif;
+}
+.uc-script-item .uc-script { max-height: none; overflow: visible; }
+.uc-script-actions { display: flex; gap: 8px; padding: 8px 10px; border-top: 1px solid #e6eaf3; }
+.uc-script-actions .uc-btn { flex: none; padding: 6px 12px; }
 `;

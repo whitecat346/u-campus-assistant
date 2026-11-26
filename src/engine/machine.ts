@@ -11,9 +11,11 @@ import {
   emptyBlanks,
   fillBlanks,
   detectTaskKind,
+  fillTextArea,
   questionsFromContent,
   questionsFromDom,
   speakingPromptText,
+  textInputs,
   transcriptFromContent,
   unansweredGroups,
   type TaskKind,
@@ -153,7 +155,7 @@ export async function runCurrentGroup(): Promise<void> {
     const prompt = speakingPromptText();
     log('说类任务：只生成短稿，不录音、不提交（决策 10）');
     const script = await draftSpeakingScript(prompt, getSettings().speaking.targetSec);
-    setStatus({ state: 'paused', script });
+    setStatus({ state: 'paused', kind: 'speaking', script });
     log(`短稿已生成（${script.split(/\s+/).length} 词），请自己朗读后手动提交`);
     return;
   }
@@ -165,10 +167,23 @@ export async function runCurrentGroup(): Promise<void> {
   }
 
   if (kind === 'writing') {
-    log('写作/简答题：当前版本仅生成稿，自动填入待 M2.5 验证 textarea 事件');
     const prompt = speakingPromptText();
-    const text = await draftSpeakingScript(prompt, Math.max(60, getSettings().speaking.targetSec));
-    setStatus({ state: 'paused', script: text });
+    const text = await draftSpeakingScript(prompt, Math.max(60, getSettings().speaking.targetSec), 'essay');
+    const target = textInputs()[0];
+    if (target && fillTextArea(target, text)) {
+      log('写作/简答题：已写入文本域（是否提交取决于「提交」设置）');
+      if (getSettings().submitMode === 'auto') {
+        setStatus({ state: 'submitting' });
+        const outcome = await submitCurrentGroup(true);
+        setStatus({ state: outcome.submitted ? 'idle' : 'failed', lastError: outcome.submitted ? undefined : (outcome.message ?? '提交未完成') });
+      } else {
+        log('dry-run：写作内容已填入，未提交');
+        setStatus({ state: 'idle' });
+      }
+    } else {
+      log('写作/简答题：没有找到可写入的文本域，只给出稿子');
+      setStatus({ state: 'paused', kind: 'writing', script: text });
+    }
     return;
   }
 

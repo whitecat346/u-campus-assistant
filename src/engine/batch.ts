@@ -20,6 +20,7 @@ import {
 import { clearCapture, latestQuestionsContent, waitForNewCapture } from '../page/capture';
 import {
   applyChoices,
+  audioUrlFromContent,
   fillTextArea,
   questionsFromContent,
   speakingPromptText,
@@ -88,19 +89,17 @@ function jitterMs(): number {
 async function gotoGroup(route: ReturnType<typeof itemToRoute>, timeoutMs = 30000): Promise<boolean> {
   clearCapture();
   const from = Date.now();
-  const before = location.hash;
   navigateToGroup(route);
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     assertRunning();
-    if (location.hash !== before && (await Promise.race([waitForNewCapture(from, 3000), sleep(3000).then(() => false)]))) {
-      // 内容已到，再给 DOM 一点渲染时间
-      await sleep(700);
+    if (await waitForNewCapture(from, 1000)) {
+      // 内容已到，再给 DOM 一点渲染时间（radio 列表要等 React 渲染完才能点）
+      await sleep(800);
       return true;
     }
-    if (Date.now() - started > timeoutMs) break;
   }
-  return !!latestQuestionsContent();
+  return false;
 }
 
 export interface BatchOutcome {
@@ -235,7 +234,8 @@ export async function startBatch(): Promise<BatchOutcome> {
         continue;
       }
       const transcript = content ? transcriptFromContent(content) : '';
-      const judged = await judgeObjective({ transcript, audioUrl: null, questions });
+      const audioUrl = content ? audioUrlFromContent(content) : null;
+      const judged = await judgeObjective({ transcript, audioUrl, questions });
       assertRunning();
       const filled = applyChoices(judged.answers);
       handled += 1;

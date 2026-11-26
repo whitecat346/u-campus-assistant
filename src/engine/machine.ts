@@ -128,7 +128,8 @@ export async function runCurrentGroup(): Promise<void> {
   log(`题型判定：${kind}`);
 
   // 等页面把内容下发（听力原文/题干都来自截获的解密内容）
-  const content = await waitForQuestions(15000);
+  // 注意 from 传 0：内容可能在本轮开始前就已被截获，不能被「必须更新」卡住。
+  const content = await waitForQuestions(8000, 0);
   assertRunning();
 
   if (kind === 'speaking') {

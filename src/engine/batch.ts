@@ -1,9 +1,12 @@
 // 批量遍历整门课程（M3）。设计依据 docs/DESIGN.md 决策 3/4/11 + docs/PAGE-MAP.md §3/§8。
 // 关键实测事实：
 //  * 进度接口 /course/api/v2/course_progress/{courseId}/{unit}/{openId}/default/，leafs 按 groupId 索引
+//  * 整课进度接口只返回 rt.units，leafs 必须逐单元取（api.fetchAllProgress 已处理）
 //  * courseId 不能 encodeURIComponent（含 '+'，编码后服务端返回 code:2）
 //  * 路由 hash = #/{courseId}/courseware/{unit}/{node0}/{node1}/{group}/p_1
 //  * 听力原文随内容下发；正确答案只在提交后下发 → 必须 LLM 判题
+//  * 说类（sentencerecord 等）内容常常不经过 JSON.parse → 用 DOM 兜底判就绪
+//  * 页面偶尔会被弹回目录页 → 队列与下标持久化到 GM，回到 pc.html 自动续跑
 import { getSettings, RUNTIME } from '../core/settings';
 import { log } from '../core/log';
 import {
@@ -14,6 +17,7 @@ import {
   itemToRoute,
   navigateToGroup,
   parseAnswerRoute,
+  type AnswerPageRoute,
   type CourseItem,
   type LeafState,
 } from '../core/api';
@@ -34,8 +38,23 @@ import { draftSpeakingScript, judgeObjective } from './judge';
 import { assertRunning, getStatus, setStatus, StopSignal, PauseSignal } from './machine';
 
 const DONE_KEY = 'uc.batch.done';
+const STATE_KEY = 'uc.batch.state';
 
 type DoneMap = Record<string, string[]>;
+
+export interface BatchState {
+  courseId: string;
+  /** 结果页查询串（cid=…&schId=…），续跑时用来重建 pc.html URL */
+  pcQuery: string;
+  plan: CourseItem[];
+  index: number;
+  running: boolean;
+  ts: number;
+  handled: number;
+  skipped: number;
+  scripts: Array<{ group: string; name: string; text: string }>;
+  failed: string[];
+}
 
 function loadDone(): DoneMap {
   return GM_getValue<DoneMap>(DONE_KEY, {});
@@ -61,6 +80,22 @@ export function resetBatchProgress(courseId?: string): void {
 
 export function doneCount(courseId: string): number {
   return (loadDone()[courseId] ?? []).length;
+}
+
+export function loadBatchState(): BatchState | null {
+  const s = GM_getValue<BatchState | null>(STATE_KEY, null);
+  if (!s || !Array.isArray(s.plan)) return null;
+  return s;
+}
+
+function saveBatchState(s: BatchState | null): void {
+  if (s) GM_setValue(STATE_KEY, { ...s, ts: Date.now() });
+  else GM_deleteValue(STATE_KEY);
+}
+
+export function clearBatchState(): void {
+  GM_deleteValue(STATE_KEY);
+  RUNTIME.stopped = true;
 }
 
 /** base（服务端任务类型）→ 本地题型 */
@@ -101,7 +136,7 @@ function pageLooksLoaded(): boolean {
 }
 
 /** 等待页面切到目标 group 且内容已下发 */
-async function gotoGroup(route: ReturnType<typeof itemToRoute>, timeoutMs = 25000): Promise<boolean> {
+async function gotoGroup(route: AnswerPageRoute, timeoutMs = 25000): Promise<boolean> {
   clearCapture();
   const from = Date.now();
   navigateToGroup(route);
@@ -129,7 +164,165 @@ export interface BatchOutcome {
   failed: string[];
 }
 
-/** 主入口：从当前课程遍历所有未完成项 */
+function isAnswerPage(): boolean {
+  return /ucontent\.unipus\.cn$/.test(location.hostname) && location.pathname.includes('/pc.html');
+}
+
+function pcUrlFor(state: BatchState, item: CourseItem): string {
+  const route = itemToRoute(item, state.courseId);
+  const hash = `#/${state.courseId}/courseware/${[route.unit, ...route.nodes, route.group].join('/')}/p_1`;
+  return `https://ucontent.unipus.cn/_pc_default/pc.html?${state.pcQuery}${hash}`;
+}
+
+/** 真正的执行循环：从 state.index 开始，每步持久化下标（页面被弹走也能续跑） */
+async function runPlan(state: BatchState): Promise<BatchOutcome> {
+  const { courseId, plan } = state;
+  const settings = getSettings();
+  const scripts = [...state.scripts];
+  const failed = [...state.failed];
+  let handled = state.handled;
+  let skipped = state.skipped;
+
+  RUNTIME.paused = false;
+  RUNTIME.stopped = false;
+  state.running = true;
+
+  setStatus({
+    state: 'planning',
+    lastError: undefined,
+    script: undefined,
+    scripts,
+    filled: getStatus().filled ?? 0,
+    skipped: 0,
+  });
+
+  try {
+    for (let i = state.index; i < plan.length; i++) {
+      const it = plan[i];
+      assertRunning();
+      state.index = i;
+      saveBatchState(state);
+      setStatus({
+        batch: { total: plan.length, index: i + 1, done: handled, current: `${it.unitName} / ${it.name}` },
+        group: it.group,
+      });
+
+      const kind = kindOfBase(it.base);
+      log(`[${i + 1}/${plan.length}] ${it.unitName} / ${it.name}（${it.group}，base=${it.base} → ${kind}）`);
+
+      // 被弹回目录页/其它页面时，先回到答题页（整页跳转，靠下次 mount 自动续跑）
+      if (!isAnswerPage()) {
+        const url = pcUrlFor(state, it);
+        log('当前不在答题页，跳回答题页后续跑');
+        saveBatchState(state);
+        location.href = url;
+        return { total: plan.length, handled, skipped, scripts: scripts.length, failed };
+      }
+
+      try {
+        const ok = await gotoGroup(itemToRoute(it, courseId));
+        assertRunning();
+        if (!ok) {
+          log('内容未下发，跳过该 group');
+          failed.push(it.group);
+          continue;
+        }
+
+        const content = latestQuestionsContent();
+
+        if (kind === 'speaking') {
+          const prompt = writingPromptFromContent(content) || (content ? transcriptFromContent(content) : '') || speakingPromptText();
+          const text = await draftSpeakingScript(prompt, settings.speaking.targetSec);
+          assertRunning();
+          scripts.push({ group: it.group, name: `${it.unitName} / ${it.name}`, text });
+          setStatus({ scripts: [...scripts] });
+          log(`说类：已生成短稿（${text.split(/\s+/).length} 词），不录音不提交`);
+          markDone(courseId, it.group);
+          skipped += 1;
+          continue;
+        }
+
+        if (kind === 'writing') {
+          const prompt = writingPromptFromContent(content) || speakingPromptText();
+          const text = await draftSpeakingScript(prompt, Math.max(60, settings.speaking.targetSec));
+          assertRunning();
+          const target = textInputs()[0];
+          if (target && fillTextArea(target, text)) {
+            handled += 1;
+            if (settings.submitMode === 'auto') {
+              const outcome = await submitCurrentGroup(true);
+              log(`写作提交：${outcome.submitted ? '成功' : `未完成（${outcome.message ?? ''}）`}`);
+            } else {
+              log('dry-run：写作内容已填入，未提交');
+            }
+            markDone(courseId, it.group);
+          } else {
+            scripts.push({ group: it.group, name: `${it.unitName} / ${it.name}`, text });
+            setStatus({ scripts: [...scripts] });
+            log('写作：未找到可写入的文本域，已把内容放进短稿列表');
+            skipped += 1;
+          }
+          continue;
+        }
+
+        // 听力 / 客观题
+        const questions = content ? questionsFromContent(content) : [];
+        if (!questions.length) {
+          log('未解析到题目，跳过');
+          failed.push(it.group);
+          continue;
+        }
+        const transcript = content ? transcriptFromContent(content) : '';
+        const audioUrl = content ? audioUrlFromContent(content) : null;
+        const judged = await judgeObjective({ transcript, audioUrl, questions });
+        assertRunning();
+        const filled = applyChoices(judged.answers);
+        handled += 1;
+        setStatus({ filled: (getStatus().filled ?? 0) + filled });
+        await sleep(400 + filled * 120);
+
+        if (settings.submitMode === 'auto') {
+          if (judged.confidence < 0.5) {
+            log(`置信度 ${judged.confidence.toFixed(2)} 偏低，不自动提交`);
+          } else {
+            const outcome = await submitCurrentGroup(true);
+            if (outcome.submitted) {
+              markDone(courseId, it.group);
+              log(`已提交 ${it.name}`);
+            } else {
+              failed.push(it.group);
+              log(`提交未完成：${outcome.message ?? ''}`);
+            }
+          }
+        } else {
+          log('dry-run：已填好答案，未提交（可在页面核对）');
+        }
+      } catch (e) {
+        if (e instanceof StopSignal || e instanceof PauseSignal) throw e;
+        failed.push(it.group);
+        log(`处理 ${it.group} 失败：${(e as Error).message}`);
+      }
+
+      state.handled = handled;
+      state.skipped = skipped;
+      saveBatchState(state);
+      assertRunning();
+      await sleep(jitterMs());
+    }
+
+    saveBatchState(null);
+    setStatus({ state: 'idle', batch: { total: plan.length, index: plan.length, done: handled } });
+    log(`批量结束：处理 ${handled}，跳过 ${skipped}，失败 ${failed.length}，短稿 ${scripts.length}`);
+    return { total: plan.length, handled, skipped, scripts: scripts.length, failed };
+  } catch (e) {
+    // 暂停/急停：保留状态，允许「继续」
+    state.running = false;
+    saveBatchState(e instanceof StopSignal ? null : state);
+    throw e;
+  }
+}
+
+/** 主入口：从当前课程构建队列并开始跑 */
 export async function startBatch(): Promise<BatchOutcome> {
   RUNTIME.paused = false;
   RUNTIME.stopped = false;
@@ -194,108 +387,42 @@ export async function startBatch(): Promise<BatchOutcome> {
     `待办 ${queue.length}${limit > 0 ? `（本轮上限 ${limit}）` : ''}（跳过：已完成 ${skippedDone} / 无提交文本页 ${skippedText} / 非必修 ${skippedOptional} / 测试或已过截止 ${skippedExam} / 其它单元 ${skippedUnit}）`,
   );
 
-  const scripts: Array<{ group: string; name: string; text: string }> = [];
-  const failed: string[] = [];
-  let handled = 0;
-  let skipped = 0;
+  const state: BatchState = {
+    courseId,
+    pcQuery: location.search.replace(/^\?/, ''),
+    plan,
+    index: 0,
+    running: true,
+    ts: Date.now(),
+    handled: 0,
+    skipped: 0,
+    scripts: [],
+    failed: [],
+  };
+  saveBatchState(state);
+  return runPlan(state);
+}
 
-  for (let i = 0; i < plan.length; i++) {
-    const it = plan[i];
-    assertRunning();
-    setStatus({ batch: { total: plan.length, index: i + 1, done: handled, current: `${it.unitName} / ${it.name}` }, group: it.group });
-
-    const kind = kindOfBase(it.base);
-    log(`[${i + 1}/${plan.length}] ${it.unitName} / ${it.name}（${it.group}，base=${it.base} → ${kind}）`);
-
-    try {
-      const ok = await gotoGroup(itemToRoute(it, courseId));
-      assertRunning();
-      if (!ok) {
-        log('内容未下发，跳过该 group');
-        failed.push(it.group);
-        continue;
-      }
-
-      const content = latestQuestionsContent();
-
-      if (kind === 'speaking') {
-        const prompt = writingPromptFromContent(content) || (content ? transcriptFromContent(content) : '') || speakingPromptText();
-        const text = await draftSpeakingScript(prompt, settings.speaking.targetSec);
-        assertRunning();
-        scripts.push({ group: it.group, name: `${it.unitName} / ${it.name}`, text });
-        setStatus({ scripts: [...scripts] });
-        log(`说类：已生成短稿（${text.split(/\s+/).length} 词），不录音不提交`);
-        markDone(courseId, it.group);
-        skipped += 1;
-        continue;
-      }
-
-      if (kind === 'writing') {
-        const prompt = writingPromptFromContent(content) || speakingPromptText();
-        const text = await draftSpeakingScript(prompt, Math.max(60, settings.speaking.targetSec));
-        assertRunning();
-        const target = textInputs()[0];
-        if (target && fillTextArea(target, text)) {
-          handled += 1;
-          if (settings.submitMode === 'auto') {
-            const outcome = await submitCurrentGroup(true);
-            log(`写作提交：${outcome.submitted ? '成功' : `未完成（${outcome.message ?? ''}）`}`);
-          } else {
-            log('dry-run：写作内容已填入，未提交');
-          }
-          markDone(courseId, it.group);
-        } else {
-          scripts.push({ group: it.group, name: `${it.unitName} / ${it.name}`, text });
-          setStatus({ scripts: [...scripts] });
-          log('写作：未找到可写入的文本域，已把内容放进短稿列表');
-          skipped += 1;
-        }
-        continue;
-      }
-
-      // 听力 / 客观题
-      const questions = content ? questionsFromContent(content) : [];
-      if (!questions.length) {
-        log('未解析到题目，跳过');
-        failed.push(it.group);
-        continue;
-      }
-      const transcript = content ? transcriptFromContent(content) : '';
-      const audioUrl = content ? audioUrlFromContent(content) : null;
-      const judged = await judgeObjective({ transcript, audioUrl, questions });
-      assertRunning();
-      const filled = applyChoices(judged.answers);
-      handled += 1;
-      setStatus({ filled: (getStatus().filled ?? 0) + filled });
-      await sleep(400 + filled * 120);
-
-      if (settings.submitMode === 'auto') {
-        if (judged.confidence < 0.5) {
-          log(`置信度 ${judged.confidence.toFixed(2)} 偏低，不自动提交`);
-        } else {
-          const outcome = await submitCurrentGroup(true);
-          if (outcome.submitted) {
-            markDone(courseId, it.group);
-            log(`已提交 ${it.name}`);
-          } else {
-            failed.push(it.group);
-            log(`提交未完成：${outcome.message ?? ''}`);
-          }
-        }
-      } else {
-        log('dry-run：已填好答案，未提交（可在页面核对）');
-      }
-    } catch (e) {
-      if (e instanceof StopSignal || e instanceof PauseSignal) throw e;
-      failed.push(it.group);
-      log(`处理 ${it.group} 失败：${(e as Error).message}`);
-    }
-
-    assertRunning();
-    await sleep(jitterMs());
+/** 页面重新加载后（被弹回/手滑刷新）自动续跑；调用方在 mount 里试一次即可 */
+export async function resumeBatchIfNeeded(): Promise<BatchOutcome | null> {
+  const state = loadBatchState();
+  if (!state || !state.running) return null;
+  if (Date.now() - state.ts > 30 * 60 * 1000) {
+    log('批量状态已超过 30 分钟，不再自动续跑');
+    saveBatchState(null);
+    return null;
   }
-
-  setStatus({ state: 'idle', batch: { total: plan.length, index: plan.length, done: handled } });
-  log(`批量结束：处理 ${handled}，跳过 ${skipped}，失败 ${failed.length}，短稿 ${scripts.length}`);
-  return { total: queue.length, handled, skipped, scripts: scripts.length, failed };
+  if (state.index >= state.plan.length) {
+    saveBatchState(null);
+    return null;
+  }
+  if (!isAnswerPage()) {
+    // 不在答题页：跳回下一条待办（整页跳转后 mount 会再调用本函数）
+    const url = pcUrlFor(state, state.plan[state.index]);
+    log(`续跑：当前不在答题页，跳转到 ${state.plan[state.index].name}`);
+    location.href = url;
+    return null;
+  }
+  log(`自动续跑：从第 ${state.index + 1}/${state.plan.length} 条继续`);
+  return runPlan(state);
 }

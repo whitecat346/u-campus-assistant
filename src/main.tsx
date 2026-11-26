@@ -10,6 +10,7 @@ import { Panel } from './ui/Panel';
 import { PANEL_CSS } from './ui/styles';
 import { detectPage, onPageChange, type PageKind } from './page/detect';
 import { log } from './core/log';
+import { resumeBatchIfNeeded } from './engine/batch';
 
 const HOST_ID = 'uc-assistant-host';
 
@@ -47,6 +48,11 @@ function mount() {
   document.documentElement.appendChild(host);
   createRoot(root).render(<App />);
   log(`已注入 ${location.href} (v${__UC_VERSION__})`);
+
+  // 批量被打断（页面被弹回目录页/刷新）后自动续跑
+  window.setTimeout(() => {
+    void resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${(e as Error).message}`));
+  }, 2500);
 }
 
 // document-start 时 body 可能还不存在 → 等 DOM 就绪再挂 UI

@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         U校园助手
 // @namespace    https://github.com/whitecat346/u-campus-assistant
-// @version      0.6.7
+// @version      0.6.8
 // @author       whitecat346
 // @description  自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）
 // @icon         https://u.unipus.cn/favicon.ico
 // @homepageURL  https://github.com/whitecat346/u-campus-assistant
 // @supportURL   https://github.com/whitecat346/u-campus-assistant/issues
-// @downloadURL  http://127.0.0.1:50937/u-campus-assistant.user.js
-// @updateURL    http://127.0.0.1:50937/u-campus-assistant.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js
 // @match        *://*.unipus.cn/*
 // @connect      127.0.0.1:8000
 // @connect      127.0.0.1:11434
@@ -13214,7 +13214,7 @@
 						className: "uc-title",
 						children: ["U校园助手 ", (0, import_jsx_runtime.jsxs)("span", {
 							className: "uc-ver",
-							children: ["v", "0.6.7"]
+							children: ["v", "0.6.8"]
 						})]
 					}), (0, import_jsx_runtime.jsx)("button", {
 						className: "uc-btn",
@@ -13777,7 +13777,7 @@
 		if (document.getElementById(HOST_ID)) return;
 		const host = document.createElement("div");
 		host.id = HOST_ID;
-		host.dataset.ucVersion = "0.6.7";
+		host.dataset.ucVersion = "0.6.8";
 		const shadow = host.attachShadow({ mode: "open" });
 		const style = document.createElement("style");
 		style.textContent = PANEL_CSS;
@@ -13786,7 +13786,7 @@
 		shadow.appendChild(root);
 		document.documentElement.appendChild(host);
 		(0, import_client.createRoot)(root).render((0, import_jsx_runtime.jsx)(App, {}));
-		log(`已注入 ${location.href} (v0.6.7)`);
+		log(`已注入 ${location.href} (v0.6.8)`);
 		window.setTimeout(() => {
 			resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${e.message}`));
 		}, 2500);

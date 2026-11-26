@@ -23,8 +23,8 @@ export interface JudgeResult {
 const SYS = [
   '你是英语听力题的答题助手。根据听力原文与题干、选项，为每题选出唯一正确答案。',
   '要求：只依据原文信息作答；原文没有直接证据时按最可能选项判断并把 confidence 降低。',
-  '必须严格输出 JSON：{"answers":{"0":"A","1":"C"},"confidence":0.0-1.0,"note":"简短理由"}',
-  'answers 的键是题目的 0 基序号（与输入顺序一致），值是选项字母（大写）。',
+  '必须严格输出 JSON：{"letters":["A","C","B"],"confidence":0.0-1.0,"note":"简短理由"}',
+  'letters 是按题目顺序排列的选项字母数组，**长度必须等于题目数量**，一个都不能省；不确定也要给一个。',
 ].join('\n');
 
 export async function resolveTranscript(input: JudgeInput): Promise<{ text: string; source: 'page' | 'asr' | 'none' }> {
@@ -92,7 +92,7 @@ export async function judgeObjective(input: JudgeInput): Promise<JudgeResult> {
 
 export function parseJudge(raw: string, count: number): JudgeResult {
   const text = stripFence(raw);
-  let obj: { answers?: Record<string, string>; confidence?: number; note?: string } | null = null;
+  let obj: { answers?: Record<string, string>; letters?: unknown; confidence?: number; note?: string } | null = null;
   try {
     obj = JSON.parse(text);
   } catch {
@@ -105,14 +105,25 @@ export function parseJudge(raw: string, count: number): JudgeResult {
       }
     }
   }
-  if (!obj?.answers) throw new Error(`LLM 输出无法解析：${text.slice(0, 200)}`);
+  if (!obj) throw new Error(`LLM 输出无法解析：${text.slice(0, 200)}`);
   const answers: Record<number, string> = {};
-  for (const [k, v] of Object.entries(obj.answers)) {
-    const idx = Number(k.replace(/\D/g, ''));
-    const i = Number.isFinite(idx) && idx >= 1 && idx <= count ? idx - 1 : Number(k);
-    const letter = String(v).trim().toUpperCase().slice(0, 1);
-    if (letter >= 'A' && letter <= 'Z') answers[i] = letter;
+
+  // 首选 letters 数组（实测「按题号给 map」时思考模型容易漏题）
+  if (Array.isArray(obj.letters)) {
+    obj.letters.forEach((v, i) => {
+      const letter = String(v).trim().toUpperCase().slice(0, 1);
+      if (i < count && letter >= 'A' && letter <= 'Z') answers[i] = letter;
+    });
   }
+  if (obj.answers && typeof obj.answers === 'object') {
+    for (const [k, v] of Object.entries(obj.answers)) {
+      const idx = Number(k.replace(/\D/g, ''));
+      const i = Number.isFinite(idx) && idx >= 1 && idx <= count ? idx - 1 : Number(k);
+      const letter = String(v).trim().toUpperCase().slice(0, 1);
+      if (letter >= 'A' && letter <= 'Z' && !(i in answers)) answers[i] = letter;
+    }
+  }
+  if (!Object.keys(answers).length) throw new Error(`LLM 未给出任何答案：${text.slice(0, 200)}`);
   return { answers, confidence: typeof obj.confidence === 'number' ? obj.confidence : 0.5, note: obj.note };
 }
 

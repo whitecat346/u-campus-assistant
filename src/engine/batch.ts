@@ -85,12 +85,28 @@ function jitterMs(): number {
   return min + Math.random() * Math.max(0, max - min);
 }
 
-/** 等待页面切到目标 group 且新内容已下发 */
-async function gotoGroup(route: ReturnType<typeof itemToRoute>, timeoutMs = 30000): Promise<boolean> {
+const LOADED_SELECTORS = [
+  'div[class*="questions--question-"]',
+  'input[type=radio]',
+  'textarea',
+  '[contenteditable="true"]',
+  'audio',
+  'button.record',
+  'button[class*="submit-bar-pc--btn"]',
+];
+
+/** DOM 里是否已经出现该题型的可操作元素（有些 group 的内容不走 JSON.parse，抓不到就靠这个兜底） */
+function pageLooksLoaded(): boolean {
+  return LOADED_SELECTORS.some((sel) => document.querySelector(sel) !== null);
+}
+
+/** 等待页面切到目标 group 且内容已下发 */
+async function gotoGroup(route: ReturnType<typeof itemToRoute>, timeoutMs = 25000): Promise<boolean> {
   clearCapture();
   const from = Date.now();
   navigateToGroup(route);
   const started = Date.now();
+  let domReadyAt = 0;
   while (Date.now() - started < timeoutMs) {
     assertRunning();
     if (await waitForNewCapture(from, 1000)) {
@@ -98,8 +114,11 @@ async function gotoGroup(route: ReturnType<typeof itemToRoute>, timeoutMs = 3000
       await sleep(800);
       return true;
     }
+    // 兜底：切过去 5 秒后 DOM 已有题目/音频/录音按钮，也认为可用（说类内容常常不经过 JSON.parse）
+    if (!domReadyAt && Date.now() - started > 5000 && pageLooksLoaded()) domReadyAt = Date.now();
+    if (domReadyAt && Date.now() - domReadyAt > 1500) return true;
   }
-  return false;
+  return pageLooksLoaded();
 }
 
 export interface BatchOutcome {

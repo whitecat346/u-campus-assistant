@@ -81,7 +81,9 @@ async function callOnce(
 
 /**
  * 调一次对话补全。思考型模型（如 deepseek-flash 带 reasoning_content）会把 max_tokens
- * 预算先花在思考上，导致 content 为空 —— 这时按 finish_reason='length' 逐次加大预算重试。
+ * 预算先花在思考上，导致 content 为空（finish=length）。
+ * 处理顺序：正常请求 → 带 `thinking:{type:'disabled'}` 重试（DeepSeek 3.2 系列认这个字段）
+ * → 再加大预算 → 再两者兼顾。后端不认 thinking 字段时会 4xx，这里吞掉继续试。
  */
 export async function chat(messages: ChatMessage[], opts?: { temperature?: number; maxTokens?: number }): Promise<string> {
   const { llm } = getSettings();
@@ -91,26 +93,41 @@ export async function chat(messages: ChatMessage[], opts?: { temperature?: numbe
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (llm.apiKey) headers.Authorization = `Bearer ${llm.apiKey}`;
 
-  let budget = Math.max(1200, opts?.maxTokens ?? 4000);
+  const baseBudget = Math.max(1200, opts?.maxTokens ?? 4000);
+  const plans: Array<{ budget: number; thinkingOff: boolean }> = [
+    { budget: baseBudget, thinkingOff: false },
+    { budget: baseBudget, thinkingOff: true },
+    { budget: Math.min(8192, baseBudget * 2), thinkingOff: true },
+    { budget: Math.min(8192, baseBudget * 2), thinkingOff: false },
+  ];
+
   let lastText = '';
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { json, text } = await callOnce(url, headers, {
+  for (const plan of plans) {
+    const payload: Record<string, unknown> = {
       model: llm.model,
       messages,
       temperature: opts?.temperature ?? 0.3,
-      max_tokens: budget,
+      max_tokens: plan.budget,
       stream: false,
-    });
+    };
+    if (plan.thinkingOff) payload.thinking = { type: 'disabled' };
+
+    let json: ChatJson;
+    let text: string;
+    try {
+      ({ json, text } = await callOnce(url, headers, payload));
+    } catch (e) {
+      if (!plan.thinkingOff) throw e;
+      log(`关闭思考的请求被拒（${(e as Error).message.slice(0, 120)}），退回普通请求`);
+      continue;
+    }
     lastText = text;
     const choice = json.choices?.[0];
     const content = choice?.message?.content?.trim();
     if (content) return content;
-
     log(
-      `LLM 未给出正文（finish=${choice?.finish_reason ?? '?'}, max_tokens=${budget}），重试中；响应前 300 字：${text.slice(0, 300)}`,
+      `LLM 未给出正文（finish=${choice?.finish_reason ?? '?'}, max_tokens=${plan.budget}, 思考=${plan.thinkingOff ? '关' : '开'}），换策略重试；响应前 200 字：${text.slice(0, 200)}`,
     );
-    if (budget >= 8192) break;
-    budget = Math.min(8192, budget * 2);
   }
   throw new Error(`LLM 未返回正文（思考 token 可能占满预算；末次响应：${lastText.slice(0, 200)}）`);
 }

@@ -22,14 +22,28 @@ export function stripHtml(html: string | null | undefined): string {
   return (d.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * 保留强调标记的取文本：把 <u>/<em>/<b>/<strong>/<i> 里的字符用 [ ] 包起来。
+ * 实测必需：4-3 Pronunciation 之类的题靠「划线部分」定位读音，stripHtml 把 <u> 抹掉后
+ * 模型看不到划线在哪，只能反复推理（甚至把 max_tokens 烧光）。
+ */
+export function stripHtmlMarked(html: string | null | undefined): string {
+  if (!html) return '';
+  const marked = html.replace(
+    /<(u|em|b|strong|i|mark)\b[^>]*>([\s\S]*?)<\/\1>/gi,
+    (_m, _tag: string, inner: string) => `[${inner.replace(/<[^>]+>/g, '')}]`,
+  );
+  return stripHtml(marked);
+}
+
 /** 从截获的内容数据读取题目（优先，文本最干净） */
 export function questionsFromContent(content: unknown): Question[] {
   const c = content as { questions?: Array<{ content?: { html?: string }; options?: Array<{ caption?: string; content?: { html?: string } }> }> };
   const qs = c?.questions ?? [];
   return qs.map((q, i) => ({
     index: i,
-    stem: stripHtml(q.content?.html).replace(/^\d+\.\s*/, ''),
-    options: (q.options ?? []).map((o) => ({ caption: String(o.caption ?? '').trim(), label: stripHtml(o.content?.html) })),
+    stem: stripHtmlMarked(q.content?.html).replace(/^\d+\.\s*/, ''),
+    options: (q.options ?? []).map((o) => ({ caption: String(o.caption ?? '').trim(), label: stripHtmlMarked(o.content?.html) })),
   }));
 }
 

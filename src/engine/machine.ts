@@ -12,19 +12,19 @@ import {
   emptyBlanks,
   fillBlanks,
   detectTaskKind,
-  fillTextArea,
   questionsFromContent,
   pageContextText,
   pickContentForDom,
   questionsFromDom,
   speakingPromptText,
-  textInputs,
   transcriptFromContent,
+  writingPromptFromContent,
   unansweredGroups,
   type TaskKind,
 } from '../page/questions';
 import { submitCurrentGroup } from '../page/submit';
 import { draftSpeakingScript, judgeBlanks, judgeObjective } from './judge';
+import { fillWriting } from './writing';
 
 export type EngineState = 'idle' | 'planning' | 'group_open' | 'answering' | 'submitting' | 'paused' | 'stopped' | 'failed';
 
@@ -170,11 +170,10 @@ export async function runCurrentGroup(): Promise<void> {
   }
 
   if (kind === 'writing') {
-    const prompt = speakingPromptText();
-    const text = await draftSpeakingScript(prompt, Math.max(60, getSettings().speaking.targetSec), 'essay');
-    const target = textInputs()[0];
-    if (target && (await fillTextArea(target, text))) {
-      log('写作/简答题：已写入文本域（是否提交取决于「提交」设置）');
+    const prompt = writingPromptFromContent(content) || speakingPromptText();
+    const res = await fillWriting(content, prompt, Math.max(60, getSettings().speaking.targetSec));
+    if (res.filled > 0) {
+      log(`写作/简答题：已写入 ${res.filled} 个输入框（是否提交取决于「提交」设置）`);
       if (getSettings().submitMode === 'auto') {
         setStatus({ state: 'submitting' });
         const outcome = await submitCurrentGroup(true);
@@ -185,7 +184,7 @@ export async function runCurrentGroup(): Promise<void> {
       }
     } else {
       log('写作/简答题：没有找到可写入的文本域，只给出稿子');
-      setStatus({ state: 'idle', kind: 'writing', script: text });
+      setStatus({ state: 'idle', kind: 'writing', script: res.texts.join('\n\n') });
     }
     return;
   }

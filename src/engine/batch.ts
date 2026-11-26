@@ -30,14 +30,12 @@ import {
   contextFromContent,
   emptyBlanks,
   fillBlanks,
-  fillTextArea,
   questionsFromContent,
   pageContextText,
   pickContentForDom,
   questionsFromDom,
   radioGroups,
   speakingPromptText,
-  textInputs,
   transcriptFromContent,
   unansweredGroups,
   writingPromptFromContent,
@@ -45,6 +43,7 @@ import {
 } from '../page/questions';
 import { submitCurrentGroup } from '../page/submit';
 import { draftSpeakingScript, judgeBlanks, judgeObjective, type ScriptMode } from './judge';
+import { fillWriting } from './writing';
 import { assertRunning, getStatus, setStatus, StopSignal, PauseSignal } from './machine';
 
 const DONE_KEY = 'uc.batch.done';
@@ -321,11 +320,10 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
 
         if (kind === 'writing') {
           const prompt = writingPromptFromContent(content) || speakingPromptText();
-          const text = await draftSpeakingScript(prompt, Math.max(60, settings.speaking.targetSec), 'essay');
+          const res = await fillWriting(content, prompt, Math.max(60, settings.speaking.targetSec));
           assertRunning();
-          setStatus({ kind: 'writing', script: text });
-          const target = textInputs()[0];
-          if (target && (await fillTextArea(target, text))) {
+          setStatus({ kind: 'writing', script: res.texts.join('\n\n') });
+          if (res.filled > 0) {
             handled += 1;
             if (settings.submitMode === 'auto') {
               const outcome = await submitCurrentGroup(true);
@@ -333,11 +331,11 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
               if (outcome.submitted) markDone(courseId, it.group);
               else failed.push(it.group);
             } else {
-              log('dry-run：写作内容已填入，未提交');
+              log(`dry-run：写作内容已填入 ${res.filled} 个输入框，未提交`);
             }
             markDone(courseId, it.group);
           } else {
-            scripts.push({ group: it.group, name: `${it.unitName} / ${it.name}`, text });
+            scripts.push({ group: it.group, name: `${it.unitName} / ${it.name}`, text: res.texts.join('\n\n') });
             setStatus({ scripts: [...scripts] });
             log('写作：未找到可写入的文本域，已把内容放进短稿列表');
             skipped += 1;

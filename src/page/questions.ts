@@ -305,6 +305,59 @@ export function writingPromptFromContent(content: unknown): string {
   return '';
 }
 
+/** 题目要求（content.direction.directionContent.html；少数题型 direction 直接是 HTML 字符串） */
+/** 挑与页面上输入框数量一致的「多小题简答」内容帧（同页多帧时用） */
+export function pickShortAnswerContent(): unknown | null {
+  const slots = textInputs().length;
+  if (slots < 2) return null;
+  const hit = recentContents().find((f) => shortAnswerItems(f).length === slots);
+  return hit ?? null;
+}
+
+export function directionFromContent(content: unknown): string {
+  const c = content as { direction?: { directionContent?: { html?: string } } | string };
+  const d = c?.direction;
+  if (typeof d === 'string') return stripHtml(d);
+  return stripHtml(d?.directionContent?.html);
+}
+
+export interface ShortAnswerItem {
+  /** 0 基序号，对应页面上第几个输入框 */
+  index: number;
+  /** 页面标签，如 "Sentence 1" */
+  label: string;
+  /** 该小题配图（词云图）直链，没有则 null */
+  imageUrl: string | null;
+  /** 页面自带参考答案（用来给模型对齐措辞，不是最终输出） */
+  reference: string;
+}
+
+/**
+ * 「一小题一个输入框」的书面简答（实测 u6g630：2 个空 + 2 张词云图）。
+ * 结构：`questions[i].content.html` 内含 <img> 与「Sentence N」，`resources[]` 里带图片直链，
+ * `analysis.html` 是页面自带参考答案。
+ * 泛化：一律按 questions 数量返回，数量与输入框不一致时由调用方决定怎么配。
+ */
+export function shortAnswerItems(content: unknown): ShortAnswerItem[] {
+  const c = content as {
+    questions?: Array<{
+      content?: { html?: string };
+      analysis?: { html?: string };
+      resources?: Array<{ type?: string; url?: string }>;
+    }>;
+  };
+  return (c?.questions ?? []).map((q, i) => {
+    const label = stripHtml(q.content?.html).replace(/\s+/g, ' ').trim();
+    const pic = (q.resources ?? []).find((r) => r?.url && /picture|image/i.test(String(r.type ?? 'image')));
+    return {
+      index: i,
+      label: label || `第 ${i + 1} 题`,
+      imageUrl: pic?.url ? String(pic.url).split('#')[0] : null,
+      reference: stripHtml(q.analysis?.html),
+    };
+  });
+}
+
 /* --------------------- 听力填空（cloze：questions:scoopquestions） --------------------- */
 
 export interface BlankItem {

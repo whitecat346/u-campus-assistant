@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         U校园助手
 // @namespace    https://github.com/whitecat346/u-campus-assistant
-// @version      0.7.0
+// @version      0.7.1
 // @author       whitecat346
 // @description  自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）
 // @icon         https://u.unipus.cn/favicon.ico
@@ -12027,6 +12027,28 @@
 		if (qs.length) return qs.join("\n");
 		return "";
 	}
+	function pickShortAnswerContent() {
+		const slots = textInputs().length;
+		if (slots < 2) return null;
+		return recentContents().find((f) => shortAnswerItems(f).length === slots) ?? null;
+	}
+	function directionFromContent(content) {
+		const d = content?.direction;
+		if (typeof d === "string") return stripHtml(d);
+		return stripHtml(d?.directionContent?.html);
+	}
+	function shortAnswerItems(content) {
+		return (content?.questions ?? []).map((q, i) => {
+			const label = stripHtml(q.content?.html).replace(/\s+/g, " ").trim();
+			const pic = (q.resources ?? []).find((r) => r?.url && /picture|image/i.test(String(r.type ?? "image")));
+			return {
+				index: i,
+				label: label || `第 ${i + 1} 题`,
+				imageUrl: pic?.url ? String(pic.url).split("#")[0] : null,
+				reference: stripHtml(q.analysis?.html)
+			};
+		});
+	}
 	function blankItems() {
 		const out = [];
 		Array.from(document.querySelectorAll("input[type=text][class*=\"fill-blank\"]")).forEach((input, i) => {
@@ -12529,6 +12551,54 @@
 			maxTokens: 2400
 		})).replace(/^["']|["']$/g, "").replace(/\r\n/g, "\n").trim();
 	}
+	var SHORT_ITEM_SYS = [
+		"你在替一名中国非英语专业的大一学生完成「大学英语听说」课的简短书面练习。",
+		"这类题通常有若干小题，每题配一张词云图，要求：① 用词云里的词造一个句子；② 表明是否同意，并给理由。",
+		"写作要求：",
+		"1) 每条先写一句完整、语法正确的英文陈述句，尽量用上词云里的关键词（优先用「参考」里出现过的搭配）；",
+		"2) 紧接着用 1–2 句表态：Yes, I agree … / No, I don't agree …，并给一个具体理由，不要空话；",
+		"3) 每条 30–60 词，语言按四级水平，避免生僻词；不要编号、不要小标题、不要 Markdown；",
+		"4) 各条之间不要雷同：观点或理由要有区别。",
+		"你只能看到文字提示，看不到图片；每张图是词云，词云里的词已在「参考」中体现，请据此造句。",
+		"必须严格输出 JSON：{\"items\":[\"第 1 条正文\",\"第 2 条正文\"]}，items 长度等于小题数量。不要输出任何多余文字。"
+	].join("\n");
+	async function draftShortAnswers(input) {
+		const n = input.items.length;
+		if (!n) return [];
+		const blocks = input.items.map((it, i) => {
+			const ref = it.reference ? `\n参考（页面自带示例，可对齐措辞但不要照抄）：${it.reference.slice(0, 700)}` : "";
+			return `小题 ${i + 1}（${it.label}）${it.imageUrl ? `；配图：${it.imageUrl}` : ""}${ref}`;
+		}).join("\n\n");
+		const ask = [
+			input.direction ? `题目要求：${input.direction}` : "",
+			`共有 ${n} 个小题，每个小题对应一个输入框：\n\n${blocks}`,
+			"只输出 JSON。"
+		].filter(Boolean).join("\n\n");
+		const text = stripFence(await chat([{
+			role: "system",
+			content: SHORT_ITEM_SYS
+		}, {
+			role: "user",
+			content: ask
+		}], {
+			temperature: .45,
+			maxTokens: 2400
+		}));
+		let obj = null;
+		try {
+			obj = JSON.parse(text);
+		} catch {
+			const m = text.match(/\{[\s\S]*\}/);
+			if (m) try {
+				obj = JSON.parse(m[0]);
+			} catch {}
+		}
+		const items = (Array.isArray(obj?.items) ? obj?.items : []).map((v) => String(v ?? "").trim()).filter(Boolean);
+		if (items.length === n) return items;
+		const parts = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+		if (parts.length === n) return parts;
+		throw new Error(`LLM 未给出 ${n} 条正文（得到 ${items.length} 条）：${text.slice(0, 200)}`);
+	}
 	var EXAM_SYS = [
 		"你是一位英语听力命题专家，正在替中国大学生做「大学英语听说」的期末考试听力选择题。",
 		"这段录音里会先朗读材料，再逐题朗读题干与四个选项；页面只给出选项文字，题干只在录音里。",
@@ -12614,6 +12684,38 @@
 			};
 		}
 		return result;
+	}
+	async function fillWriting(content, fallbackPrompt, targetSec) {
+		const inputs = textInputs();
+		const src = pickShortAnswerContent() ?? content;
+		const items = src ? shortAnswerItems(src) : [];
+		if (inputs.length >= 2 && items.length >= 2) {
+			log(`多小题书面作答：${items.length} 小题 / ${inputs.length} 个输入框，逐题生成`);
+			if (!items.some((it) => it.reference.length >= 20 || it.label.length >= 8)) log("多小题简答：页面没给文字线索（只有图片），只能按题目要求造句，质量可能下降");
+			const texts = await draftShortAnswers({
+				direction: directionFromContent(src),
+				items
+			});
+			let filled = 0;
+			for (let i = 0; i < inputs.length; i++) {
+				const text = texts[i] ?? texts[texts.length - 1] ?? "";
+				if (!text) continue;
+				if (await fillTextArea(inputs[i], text)) filled += 1;
+				else log(`第 ${i + 1} 个输入框写入失败`);
+			}
+			return {
+				filled,
+				texts,
+				mode: "multi"
+			};
+		}
+		const text = await draftSpeakingScript(fallbackPrompt, targetSec, "essay");
+		const target = inputs[0];
+		return {
+			filled: (target ? await fillTextArea(target, text) : false) ? 1 : 0,
+			texts: [text],
+			mode: "single"
+		};
 	}
 	var status = {
 		state: "idle",
@@ -12742,10 +12844,9 @@
 			return;
 		}
 		if (kind === "writing") {
-			const text = await draftSpeakingScript(speakingPromptText(), Math.max(60, getSettings().speaking.targetSec), "essay");
-			const target = textInputs()[0];
-			if (target && await fillTextArea(target, text)) {
-				log("写作/简答题：已写入文本域（是否提交取决于「提交」设置）");
+			const res = await fillWriting(content, writingPromptFromContent(content) || speakingPromptText(), Math.max(60, getSettings().speaking.targetSec));
+			if (res.filled > 0) {
+				log(`写作/简答题：已写入 ${res.filled} 个输入框（是否提交取决于「提交」设置）`);
 				if (getSettings().submitMode === "auto") {
 					setStatus({ state: "submitting" });
 					const outcome = await submitCurrentGroup(true);
@@ -12762,7 +12863,7 @@
 				setStatus({
 					state: "idle",
 					kind: "writing",
-					script: text
+					script: res.texts.join("\n\n")
 				});
 			}
 			return;
@@ -13064,27 +13165,26 @@
 						continue;
 					}
 					if (kind === "writing") {
-						const text = await draftSpeakingScript(writingPromptFromContent(content) || speakingPromptText(), Math.max(60, settings.speaking.targetSec), "essay");
+						const res = await fillWriting(content, writingPromptFromContent(content) || speakingPromptText(), Math.max(60, settings.speaking.targetSec));
 						assertRunning();
 						setStatus({
 							kind: "writing",
-							script: text
+							script: res.texts.join("\n\n")
 						});
-						const target = textInputs()[0];
-						if (target && await fillTextArea(target, text)) {
+						if (res.filled > 0) {
 							handled += 1;
 							if (settings.submitMode === "auto") {
 								const outcome = await submitCurrentGroup(true);
 								log(`写作提交：${outcome.submitted ? "成功" : `未完成（${outcome.message ?? ""}）`}`);
 								if (outcome.submitted) markDone(courseId, it.group);
 								else failed.push(it.group);
-							} else log("dry-run：写作内容已填入，未提交");
+							} else log(`dry-run：写作内容已填入 ${res.filled} 个输入框，未提交`);
 							markDone(courseId, it.group);
 						} else {
 							scripts.push({
 								group: it.group,
 								name: `${it.unitName} / ${it.name}`,
-								text
+								text: res.texts.join("\n\n")
 							});
 							setStatus({ scripts: [...scripts] });
 							log("写作：未找到可写入的文本域，已把内容放进短稿列表");
@@ -13668,7 +13768,7 @@
 						className: "uc-title",
 						children: ["U校园助手 ", (0, import_jsx_runtime.jsxs)("span", {
 							className: "uc-ver",
-							children: ["v", "0.7.0"]
+							children: ["v", "0.7.1"]
 						})]
 					}), (0, import_jsx_runtime.jsx)("button", {
 						className: "uc-btn",
@@ -14271,7 +14371,7 @@
 		if (document.getElementById(HOST_ID)) return;
 		const host = document.createElement("div");
 		host.id = HOST_ID;
-		host.dataset.ucVersion = "0.7.0";
+		host.dataset.ucVersion = "0.7.1";
 		const shadow = host.attachShadow({ mode: "open" });
 		const style = document.createElement("style");
 		style.textContent = PANEL_CSS;
@@ -14280,7 +14380,7 @@
 		shadow.appendChild(root);
 		document.documentElement.appendChild(host);
 		(0, import_client.createRoot)(root).render((0, import_jsx_runtime.jsx)(App, {}));
-		log(`已注入 ${location.href} (v0.7.0)`);
+		log(`已注入 ${location.href} (v0.7.1)`);
 		window.setTimeout(() => {
 			resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${e.message}`));
 		}, 2500);

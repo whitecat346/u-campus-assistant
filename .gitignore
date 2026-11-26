@@ -1,6 +1,6 @@
 node_modules/
-dist/
-*.user.js
 .cache/
 *.tgz
 .DS_Store
+# 发布产物要进仓库：README 里的 raw 一键安装链接依赖 dist/
+# dist/

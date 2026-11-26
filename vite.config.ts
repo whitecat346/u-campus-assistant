@@ -17,16 +17,18 @@ export default defineConfig({
       entry: 'src/main.tsx',
       userscript: {
         name: 'U校园助手',
-        namespace: 'local.u-campus.assistant',
+        namespace: 'https://github.com/whitecat346/u-campus-assistant',
         version: pkg.version,
-        description: '自动完成 U校园 课程作业（听力用 SenseVoice 识别，口语只出稿）',
-        author: 'local',
+        description: '自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）',
+        author: 'whitecat346',
         icon: 'https://u.unipus.cn/favicon.ico',
         match: ['*://*.unipus.cn/*'],
         'run-at': 'document-start',
-        // 本地开发：由 .cache/tools/serve.mjs 提供，改完重新 build 后 Tampermonkey 可自动更新
-        updateURL: 'http://127.0.0.1:50937/u-campus-assistant.user.js',
-        downloadURL: 'http://127.0.0.1:50937/u-campus-assistant.user.js',
+        homepageURL: 'https://github.com/whitecat346/u-campus-assistant',
+        supportURL: 'https://github.com/whitecat346/u-campus-assistant/issues',
+        // 发布通道：从仓库 raw 地址自动更新；本地开发时用 .cache/tools/serve.mjs 起 50937，改这两个值即可
+        updateURL: 'https://raw.githubusercontent.com/whitecat346/u-campus-assistant/main/dist/u-campus-assistant.user.js',
+        downloadURL: 'https://raw.githubusercontent.com/whitecat346/u-campus-assistant/main/dist/u-campus-assistant.user.js',
         connect: ['127.0.0.1:8000', '127.0.0.1:11434', '127.0.0.1:50937', '*'],
         grant: ['GM_getValue', 'GM_setValue', 'GM_deleteValue', 'GM_listValues', 'GM_xmlhttpRequest', 'unsafeWindow'],
         // 服务端与本机 LLM 走 127.0.0.1；跨域音频下载走 GM_xmlhttpRequest

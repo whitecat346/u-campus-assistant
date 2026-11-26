@@ -122,10 +122,21 @@ export async function fetchProgress(courseId: string, unit: string, openId: stri
   return r.rt?.leafs ?? {};
 }
 
-/** 不带 unit 的整课进度：/course_progress/{courseId}/{openId}/default/ */
+/** 整课进度：接口返回的是 rt.units（单元级），leafs 必须逐单元取，实测这一点很容易踩空 */
 export async function fetchAllProgress(courseId: string, openId: string): Promise<Record<string, LeafState>> {
-  const r = await apiGet<{ rt?: { leafs?: Record<string, LeafState> } }>(`/course/api/v2/course_progress/${courseId}/${openId}/default/`);
-  return r.rt?.leafs ?? {};
+  const r = await apiGet<{ rt?: { units?: Record<string, unknown>; leafs?: Record<string, LeafState> } }>(
+    `/course/api/v2/course_progress/${courseId}/${openId}/default/`,
+  );
+  const leafs: Record<string, LeafState> = { ...(r.rt?.leafs ?? {}) };
+  const units = Object.keys(r.rt?.units ?? {});
+  for (const u of units) {
+    try {
+      Object.assign(leafs, await fetchProgress(courseId, u, openId));
+    } catch {
+      /* 单个单元失败不影响整体 */
+    }
+  }
+  return leafs;
 }
 
 let cachedOpenId = '';

@@ -17,6 +17,7 @@ import {
   itemToRoute,
   navigateToGroup,
   parseAnswerRoute,
+  saveUnits,
   type AnswerPageRoute,
   type CourseItem,
   type LeafState,
@@ -430,6 +431,7 @@ export async function startBatch(): Promise<BatchOutcome> {
 
   const openId = await getOpenId();
   const tree = await fetchCourseTree(courseId);
+  saveUnits(tree);
   const items = flattenCourse(tree);
   log(`课程树解析出 ${items.length} 个 group`);
 

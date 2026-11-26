@@ -99,6 +99,23 @@ export interface CourseTree {
   units: CourseUnit[];
 }
 
+/** 记住上次读到的单元清单，给设置页的「批量范围」下拉用（每次批量开始时刷新） */
+const UNITS_KEY = 'uc.course.units';
+
+export interface UnitOption {
+  unit: string;
+  name: string;
+}
+
+export function cachedUnits(): UnitOption[] {
+  return GM_getValue<UnitOption[]>(UNITS_KEY, []) ?? [];
+}
+
+export function saveUnits(tree: CourseTree): void {
+  const list = (tree.units ?? []).map((u) => ({ unit: u.url, name: u.name }));
+  if (list.length) GM_setValue(UNITS_KEY, list);
+}
+
 /* 实测坑：courseId 里含 `+` 与 `:`，**不能用 encodeURIComponent**。
    编码成 %2B 后服务端返回 {"code":2,"course":""}；原始字符串才正确。 */
 export async function fetchCourseTree(courseId: string): Promise<CourseTree> {

@@ -4,6 +4,7 @@ import { canStartAnswering, detectPage, onPageChange } from '../page/detect';
 import { getStatus, onStatus, startEngine, pause, resume, stop, type EngineStatus } from '../engine/machine';
 import { startBatch } from '../engine/batch';
 import { onLog, snapshot, type LogLine } from '../core/log';
+import { cachedUnits } from '../core/api';
 
 type Tab = 'run' | 'settings' | 'log';
 
@@ -19,6 +20,7 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
   const [status, setStatus] = useState<EngineStatus>(getStatus);
   const [lines, setLines] = useState<LogLine[]>(snapshot);
   const [copied, setCopied] = useState('');
+  const [units, setUnits] = useState(cachedUnits);
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
     const s = getSettings().ui;
     return {
@@ -30,6 +32,10 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
 
   useEffect(() => onStatus(setStatus), []);
   useEffect(() => onLog(setLines), []);
+  // 打开设置页时刷新单元清单（批量跑过一次后才有真实单元名）
+  useEffect(() => {
+    if (tab === 'settings') setUnits(cachedUnits());
+  }, [tab]);
 
   // Esc 关闭（需求：Esc 快捷键关闭）
   useEffect(() => {
@@ -263,21 +269,43 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
             </select>
           </div>
           <div className="uc-row">
-            <label>批量范围</label>
-            <input
-              className="uc-input"
-              placeholder="单元如 u4（空=全部）"
+            <label>本轮只跑</label>
+            <select
+              className="uc-select"
               value={settings.batch.unit}
-              onChange={(e) => patch({ batch: { ...settings.batch, unit: e.target.value.trim() } })}
-            />
-            <input
-              className="uc-input"
-              type="number"
-              min={0}
-              placeholder="上限 0=不限"
-              value={settings.batch.limit}
+              onChange={(e) => patch({ batch: { ...settings.batch, unit: e.target.value } })}
+            >
+              <option value="">全部单元</option>
+              {units.map((u) => (
+                <option key={u.unit} value={u.unit}>
+                  {u.unit} · {u.name}
+                </option>
+              ))}
+              {settings.batch.unit && !units.some((u) => u.unit === settings.batch.unit) && (
+                <option value={settings.batch.unit}>{settings.batch.unit}（上次用的单元）</option>
+              )}
+            </select>
+          </div>
+          <div className="uc-row">
+            <label>本轮最多</label>
+            <select
+              className="uc-select"
+              value={String(settings.batch.limit)}
               onChange={(e) => patch({ batch: { ...settings.batch, limit: Number(e.target.value) || 0 } })}
-            />
+            >
+              <option value="0">不限条数</option>
+              <option value="1">1 条（试跑）</option>
+              <option value="5">5 条</option>
+              <option value="10">10 条</option>
+              <option value="20">20 条</option>
+              <option value="30">30 条</option>
+              {![0, 1, 5, 10, 20, 30].includes(settings.batch.limit) && (
+                <option value={String(settings.batch.limit)}>{settings.batch.limit} 条</option>
+              )}
+            </select>
+          </div>
+          <div className="uc-hint" style={{ marginBottom: 6 }}>
+            「整课批量」只做未完成的必修项（说类只出稿、不提交，测试/考试默认跳过）。上面两项只用来给这一轮限范围：先选一个单元、跑 5 条看看，确认没问题再切回「全部单元 / 不限条数」。
           </div>
           <div className="uc-row">
             <label>间隔(秒)</label>

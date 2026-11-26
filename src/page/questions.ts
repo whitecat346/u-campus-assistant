@@ -1,7 +1,7 @@
 // 题目解析与作答（实测选择器，见 docs/PAGE-MAP.md §4.1）。
 // 原则：**只驱动 UI，不伪造接口**。点 radio / 填 textarea 后由页面自身生成提交体，
 // 因此无需构造 state / qid / version 等内部字段（这些字段实测存在但由前端维护）。
-import { latestKeys } from './capture';
+import { latestKeys, recentContents } from './capture';
 
 export interface Option {
   caption: string;
@@ -54,6 +54,24 @@ export function transcriptFromContent(content: unknown): string {
   return parts.join('\n\n');
 }
 
+/**
+ * 内容里的材料/对话正文（实测「选合适的表达补全对话」题型）：
+ * `content[i].html` 可能是字符串，也可能是 `{ html: "..." }` 这种嵌套对象（u6g423 实测就是后者），
+ * 正文里带着 1) ______ 这样的空位编号，题干只给「1. 1) ______ winning.」，脱离对话原文无法判断。
+ */
+export function contextFromContent(content: unknown): string {
+  const c = content as { content?: Array<{ html?: string | { html?: string } }> };
+  const parts = (c?.content ?? [])
+    .map((m) => {
+      const h = m?.html;
+      if (typeof h === 'string') return stripHtml(h);
+      if (h && typeof h === 'object') return stripHtml((h as { html?: string }).html);
+      return '';
+    })
+    .filter(Boolean);
+  return parts.join('\n\n');
+}
+
 export function audioUrlFromContent(content: unknown): string | null {
   const c = content as { content?: Array<{ audio?: { audio?: { url?: string } } }> };
   for (const m of c?.content ?? []) {
@@ -64,6 +82,27 @@ export function audioUrlFromContent(content: unknown): string | null {
 }
 
 /* ------------------------------- DOM 侧 ------------------------------- */
+
+/**
+ * 同页可能连续下发多份内容（u6g423 实测：先 scoopquestions 再 questions），
+ * 最新一帧不一定是屏幕上正在显示的这组题。这里按「题目数量 == DOM 单选组数量」挑。
+ */
+export function pickContentForDom<T = unknown>(): T | null {
+  const frames = recentContents<T>();
+  if (!frames.length) return null;
+  const groups = radioGroups().size;
+  if (groups > 0) {
+    const exact = frames.find((f) => questionsFromContent(f).length === groups);
+    if (exact) return exact;
+  }
+  return null;
+}
+
+/** 页面上所有材料的正文（对话/短文），跨帧合并去重：「补全对话」题型靠它判题 */
+export function pageContextText(): string {
+  const parts = recentContents().map((f) => contextFromContent(f)).filter((t) => t.length > 40);
+  return Array.from(new Set(parts)).join('\n\n');
+}
 
 /** 页面上的单选组：name → input 列表（实测 name 形如 single-1 … single-10） */
 export function radioGroups(): Map<string, HTMLInputElement[]> {

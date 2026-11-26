@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         U校园助手
 // @namespace    https://github.com/whitecat346/u-campus-assistant
-// @version      0.6.11
+// @version      0.7.0
 // @author       whitecat346
 // @description  自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）
 // @icon         https://u.unipus.cn/favicon.ico
@@ -99,6 +99,16 @@
 			if (k) return v[k];
 		}
 		return null;
+	}
+	function recentContents(limit = 10) {
+		const out = [];
+		for (let i = CAP.length - 1; i >= 0 && out.length < limit; i--) {
+			const v = CAP[i].value;
+			if (!v || typeof v !== "object") continue;
+			const k = Object.keys(v).find((x) => x.indexOf("questions:") === 0);
+			if (k) out.push(v[k]);
+		}
+		return out;
 	}
 	function latestKeys() {
 		const last = CAP[CAP.length - 1];
@@ -11859,6 +11869,14 @@
 	function transcriptFromContent(content) {
 		return (content?.content ?? []).map((m) => stripHtml(m?.audio?.script?.html)).filter(Boolean).join("\n\n");
 	}
+	function contextFromContent(content) {
+		return (content?.content ?? []).map((m) => {
+			const h = m?.html;
+			if (typeof h === "string") return stripHtml(h);
+			if (h && typeof h === "object") return stripHtml(h.html);
+			return "";
+		}).filter(Boolean).join("\n\n");
+	}
 	function audioUrlFromContent(content) {
 		const c = content;
 		for (const m of c?.content ?? []) {
@@ -11866,6 +11884,20 @@
 			if (u) return u.split("#")[0];
 		}
 		return null;
+	}
+	function pickContentForDom() {
+		const frames = recentContents();
+		if (!frames.length) return null;
+		const groups = radioGroups().size;
+		if (groups > 0) {
+			const exact = frames.find((f) => questionsFromContent(f).length === groups);
+			if (exact) return exact;
+		}
+		return null;
+	}
+	function pageContextText() {
+		const parts = recentContents().map((f) => contextFromContent(f)).filter((t) => t.length > 40);
+		return Array.from(new Set(parts)).join("\n\n");
 	}
 	function radioGroups() {
 		const map = new Map();
@@ -12247,6 +12279,7 @@
 		"4) 原文来自语音识别时可能有错词，请按上下文纠正后再判断。",
 		"题干或选项里用方括号包起来的片段（如 [ea] ）是页面上划线/加粗强调的部分，通常是发音题要你对比读音的位置。",
 		"遇到发音题（选与划线部分读音相同的单词）：只按音标规则判断，先写出划线部分的音标，再逐个比对选项单词里相同位置/相同字母组合的读音，不要展开长篇讨论。",
+		"遇到「补全对话：为每个空选最合适的表达」的题（题干形如 1) ______），必须把左栏对话当成上下文：先判断该空所在句子的说话人、语气、前后句逻辑与语法衔接，再挑唯一能让整段对话通顺的选项；同一个选项一般不会被重复使用。",
 		"没有原文时，只能依据题干与选项的语义常识选最合理的一项，并把 confidence 压到 0.4 以下。",
 		"必须严格输出 JSON：{\"letters\":[\"A\",\"C\",\"B\"],\"confidence\":0.0-1.0,\"note\":\"简短理由\"}",
 		"letters 是按题目顺序排列的选项字母数组，长度必须等于题目数量，一个都不能省；不确定也要给一个。不要输出任何多余文字。"
@@ -12255,6 +12288,10 @@
 		if (input.transcript && input.transcript.trim().length > 40) return {
 			text: input.transcript.trim(),
 			source: "page"
+		};
+		if (input.context && input.context.trim().length > 40) return {
+			text: input.context.trim(),
+			source: "context"
 		};
 		if (!input.audioUrl) return {
 			text: "",
@@ -12287,7 +12324,7 @@
 		}).join("\n\n");
 		const user = [
 			input.direction ? `题目要求：${input.direction}` : "",
-			transcript ? `听力原文（来源：${source === "asr" ? "语音识别" : "页面下发"}）：\n${transcript}` : "注意：没有可用原文，请仅凭题干与选项的语义常识判断。",
+			transcript ? `${source === "context" ? "对话/材料正文" : "听力原文"}（来源：${source === "asr" ? "语音识别" : "页面下发"}）：\n${transcript}` : "注意：没有可用原文，请仅凭题干与选项的语义常识判断。",
 			`题目：\n${qBlock}`,
 			"只输出 JSON。"
 		].filter(Boolean).join("\n\n");
@@ -12730,7 +12767,8 @@
 			}
 			return;
 		}
-		const questions = content ? questionsFromContent(content) : questionsFromDom();
+		const chosen = pickContentForDom() ?? content;
+		const questions = chosen ? questionsFromContent(chosen) : questionsFromDom();
 		if (!questions.length) {
 			setStatus({
 				state: "failed",
@@ -12738,12 +12776,14 @@
 			});
 			return;
 		}
-		const transcript = content ? transcriptFromContent(content) : "";
-		const audioUrl = content ? audioUrlFromContent(content) : document.querySelector("audio")?.currentSrc ?? null;
-		log(`题目 ${questions.length} 道；原文${transcript ? "已下发" : "缺失（将回退 ASR）"}；音频 ${audioUrl ? "有" : "无"}`);
+		const transcript = chosen ? transcriptFromContent(chosen) : "";
+		const pageContext = pageContextText() || (chosen ? contextFromContent(chosen) : "");
+		const audioUrl = chosen ? audioUrlFromContent(chosen) : document.querySelector("audio")?.currentSrc ?? null;
+		log(`题目 ${questions.length} 道；原文${transcript ? "已下发" : "缺失（将回退 ASR）"}；${pageContext ? `对话/材料正文 ${pageContext.length} 字` : "无材料正文"}；音频 ${audioUrl ? "有" : "无"}`);
 		setStatus({ state: "answering" });
 		const judged = await judgeObjective({
 			transcript,
+			context: pageContext,
 			audioUrl,
 			questions
 		});
@@ -13067,9 +13107,12 @@
 						failed.push(it.group);
 						continue;
 					}
+					const chosen = pickContentForDom() ?? ctx;
+					if (chosen && chosen !== ctx) questions = questionsFromContent(chosen);
 					const judged = await judgeObjective({
-						transcript: ctx ? transcriptFromContent(ctx) : "",
-						audioUrl: ctx ? audioUrlFromContent(ctx) : document.querySelector("audio")?.currentSrc ?? null,
+						transcript: chosen ? transcriptFromContent(chosen) : "",
+						context: pageContextText() || (chosen ? contextFromContent(chosen) : ""),
+						audioUrl: chosen ? audioUrlFromContent(chosen) : document.querySelector("audio")?.currentSrc ?? null,
 						questions
 					});
 					assertRunning();
@@ -13625,7 +13668,7 @@
 						className: "uc-title",
 						children: ["U校园助手 ", (0, import_jsx_runtime.jsxs)("span", {
 							className: "uc-ver",
-							children: ["v", "0.6.11"]
+							children: ["v", "0.7.0"]
 						})]
 					}), (0, import_jsx_runtime.jsx)("button", {
 						className: "uc-btn",
@@ -14228,7 +14271,7 @@
 		if (document.getElementById(HOST_ID)) return;
 		const host = document.createElement("div");
 		host.id = HOST_ID;
-		host.dataset.ucVersion = "0.6.11";
+		host.dataset.ucVersion = "0.7.0";
 		const shadow = host.attachShadow({ mode: "open" });
 		const style = document.createElement("style");
 		style.textContent = PANEL_CSS;
@@ -14237,7 +14280,7 @@
 		shadow.appendChild(root);
 		document.documentElement.appendChild(host);
 		(0, import_client.createRoot)(root).render((0, import_jsx_runtime.jsx)(App, {}));
-		log(`已注入 ${location.href} (v0.6.11)`);
+		log(`已注入 ${location.href} (v0.7.0)`);
 		window.setTimeout(() => {
 			resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${e.message}`));
 		}, 2500);

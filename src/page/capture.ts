@@ -104,6 +104,22 @@ export function latestAnyContent(): CapturedContent | null {
   return CAP.length ? CAP[CAP.length - 1] : null;
 }
 
+/**
+ * 最近若干帧「题目型」内容（新→旧）。
+ * 实测：同一页会连续下发多份内容（u6g423 先 scoopquestions 再 questions），
+ * 最新的那一帧不一定是屏幕上正在显示的这组题，需要按题目数量与 DOM 对齐后再挑。
+ */
+export function recentContents<T = Record<string, unknown>>(limit = 10): T[] {
+  const out: T[] = [];
+  for (let i = CAP.length - 1; i >= 0 && out.length < limit; i--) {
+    const v = CAP[i].value as Record<string, unknown>;
+    if (!v || typeof v !== 'object') continue;
+    const k = Object.keys(v).find((x) => x.indexOf('questions:') === 0);
+    if (k) out.push(v[k] as T);
+  }
+  return out;
+}
+
 /** 最近一次截获内容的键名（用来判定题型：speaking/writing 的键各不相同） */
 export function latestKeys(): string[] {
   const last = CAP[CAP.length - 1];

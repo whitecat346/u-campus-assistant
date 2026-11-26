@@ -27,10 +27,13 @@ import {
   applyChoices,
   audioUrlFromContent,
   blankItems,
+  contextFromContent,
   emptyBlanks,
   fillBlanks,
   fillTextArea,
   questionsFromContent,
+  pageContextText,
+  pickContentForDom,
   questionsFromDom,
   radioGroups,
   speakingPromptText,
@@ -358,9 +361,13 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
           failed.push(it.group);
           continue;
         }
-        const transcript = ctx ? transcriptFromContent(ctx) : '';
-        const audioUrl = ctx ? audioUrlFromContent(ctx) : (document.querySelector('audio') as HTMLAudioElement | null)?.currentSrc ?? null;
-        const judged = await judgeObjective({ transcript, audioUrl, questions });
+        // 同页可能下发多份内容 → 挑与 DOM 题目数量一致的那份（u6g423 实测：最新帧可能不是这组题）
+        const chosen = pickContentForDom() ?? ctx;
+        if (chosen && chosen !== ctx) questions = questionsFromContent(chosen);
+        const transcript = chosen ? transcriptFromContent(chosen) : '';
+        const pageContext = pageContextText() || (chosen ? contextFromContent(chosen) : '');
+        const audioUrl = chosen ? audioUrlFromContent(chosen) : (document.querySelector('audio') as HTMLAudioElement | null)?.currentSrc ?? null;
+        const judged = await judgeObjective({ transcript, context: pageContext, audioUrl, questions });
         assertRunning();
         const filled = applyChoices(judged.answers);
         handled += 1;

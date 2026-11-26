@@ -11,6 +11,8 @@ import type { ExamQuestion } from '../page/exam';
 export interface JudgeInput {
   direction?: string;
   transcript?: string;
+  /** 页面下发的材料/对话正文（如「补全对话」题型：左栏对话带空位编号） */
+  context?: string;
   audioUrl?: string | null;
   questions: Question[];
 }
@@ -30,13 +32,15 @@ const SYS = [
   '4) 原文来自语音识别时可能有错词，请按上下文纠正后再判断。',
   '题干或选项里用方括号包起来的片段（如 [ea] ）是页面上划线/加粗强调的部分，通常是发音题要你对比读音的位置。',
   '遇到发音题（选与划线部分读音相同的单词）：只按音标规则判断，先写出划线部分的音标，再逐个比对选项单词里相同位置/相同字母组合的读音，不要展开长篇讨论。',
+  '遇到「补全对话：为每个空选最合适的表达」的题（题干形如 1) ______），必须把左栏对话当成上下文：先判断该空所在句子的说话人、语气、前后句逻辑与语法衔接，再挑唯一能让整段对话通顺的选项；同一个选项一般不会被重复使用。',
   '没有原文时，只能依据题干与选项的语义常识选最合理的一项，并把 confidence 压到 0.4 以下。',
   '必须严格输出 JSON：{"letters":["A","C","B"],"confidence":0.0-1.0,"note":"简短理由"}',
   'letters 是按题目顺序排列的选项字母数组，长度必须等于题目数量，一个都不能省；不确定也要给一个。不要输出任何多余文字。',
 ].join('\n');
 
-export async function resolveTranscript(input: JudgeInput): Promise<{ text: string; source: 'page' | 'asr' | 'none' }> {
+export async function resolveTranscript(input: JudgeInput): Promise<{ text: string; source: 'page' | 'asr' | 'context' | 'none' }> {
   if (input.transcript && input.transcript.trim().length > 40) return { text: input.transcript.trim(), source: 'page' };
+  if (input.context && input.context.trim().length > 40) return { text: input.context.trim(), source: 'context' };
   if (!input.audioUrl) return { text: '', source: 'none' };
   if (!getSettings().asr.baseURL) return { text: '', source: 'none' };
   try {
@@ -61,7 +65,9 @@ export async function judgeObjective(input: JudgeInput): Promise<JudgeResult> {
 
   const user = [
     input.direction ? `题目要求：${input.direction}` : '',
-    transcript ? `听力原文（来源：${source === 'asr' ? '语音识别' : '页面下发'}）：\n${transcript}` : '注意：没有可用原文，请仅凭题干与选项的语义常识判断。',
+    transcript
+      ? `${source === 'context' ? '对话/材料正文' : '听力原文'}（来源：${source === 'asr' ? '语音识别' : '页面下发'}）：\n${transcript}`
+      : '注意：没有可用原文，请仅凭题干与选项的语义常识判断。',
     `题目：\n${qBlock}`,
     '只输出 JSON。',
   ]

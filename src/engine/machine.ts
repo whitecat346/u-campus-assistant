@@ -8,11 +8,14 @@ import {
   applyChoices,
   audioUrlFromContent,
   blankItems,
+  contextFromContent,
   emptyBlanks,
   fillBlanks,
   detectTaskKind,
   fillTextArea,
   questionsFromContent,
+  pageContextText,
+  pickContentForDom,
   questionsFromDom,
   speakingPromptText,
   textInputs,
@@ -188,17 +191,23 @@ export async function runCurrentGroup(): Promise<void> {
   }
 
   // 听力/客观题
-  const questions = content ? questionsFromContent(content) : questionsFromDom();
+  // 同页可能下发多份内容 → 先挑与 DOM 题目数量一致的那份，避免判到别的材料
+  const chosen = pickContentForDom() ?? content;
+  const questions = chosen ? questionsFromContent(chosen) : questionsFromDom();
   if (!questions.length) {
     setStatus({ state: 'failed', lastError: '未能解析到题目（内容与 DOM 均为空）' });
     return;
   }
-  const transcript = content ? transcriptFromContent(content) : '';
-  const audioUrl = content ? audioUrlFromContent(content) : (document.querySelector('audio') as HTMLAudioElement | null)?.currentSrc ?? null;
-  log(`题目 ${questions.length} 道；原文${transcript ? '已下发' : '缺失（将回退 ASR）'}；音频 ${audioUrl ? '有' : '无'}`);
+  const transcript = chosen ? transcriptFromContent(chosen) : '';
+  const pageContext = pageContextText() || (chosen ? contextFromContent(chosen) : '');
+  const audioUrl = chosen ? audioUrlFromContent(chosen) : (document.querySelector('audio') as HTMLAudioElement | null)?.currentSrc ?? null;
+  log(
+    `题目 ${questions.length} 道；原文${transcript ? '已下发' : '缺失（将回退 ASR）'}；` +
+      `${pageContext ? `对话/材料正文 ${pageContext.length} 字` : '无材料正文'}；音频 ${audioUrl ? '有' : '无'}`,
+  );
 
   setStatus({ state: 'answering' });
-  const judged = await judgeObjective({ transcript, audioUrl, questions });
+  const judged = await judgeObjective({ transcript, context: pageContext, audioUrl, questions });
   assertRunning();
   log(`判题结果：${JSON.stringify(judged.answers)}（置信度 ${judged.confidence.toFixed(2)}）${judged.note ? ` — ${judged.note}` : ''}`);
 

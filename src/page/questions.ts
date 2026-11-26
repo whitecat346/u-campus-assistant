@@ -193,19 +193,64 @@ export function textInputs(): Array<HTMLTextAreaElement | HTMLElement> {
   return [...areas, ...edits];
 }
 
-/** 用「原生 setter + input 事件」写入，React 受控组件才会更新 state */
-export function fillTextArea(el: HTMLTextAreaElement | HTMLElement, value: string): boolean {
+const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+
+/**
+ * 用「真实输入路径」写值：focus → 全选 → execCommand('insertText') → blur。
+ * 实测（2026-11-26）：只发 input/change 事件时，输入框里能看到值，但站点 state 没收到，
+ * 提交时会报「还有 N 个空未填，请完成后提交」；改走 execCommand 后站点的 onChange 才真正生效。
+ * 失败时退回原生 setter + input/change。
+ */
+async function typeInto(el: HTMLInputElement | HTMLTextAreaElement, value: string, stepMs = 120): Promise<boolean> {
   try {
-    if (el instanceof HTMLTextAreaElement) {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-      setter?.call(el, value);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return el.value === value;
-    }
+    el.scrollIntoView({ block: 'center' });
+  } catch {
+    /* ignore */
+  }
+  el.focus();
+  try {
+    el.select();
+  } catch {
+    /* ignore */
+  }
+  let ok = false;
+  try {
+    ok = document.execCommand('insertText', false, value);
+  } catch {
+    ok = false;
+  }
+  if (!ok || el.value !== value) {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  el.blur();
+  if (stepMs > 0) await sleep(stepMs);
+  return el.value === value;
+}
+
+/** 写入文本域/可编辑区（写作、简答）。textarea 走真实输入，contenteditable 走 execCommand */
+export async function fillTextArea(el: HTMLTextAreaElement | HTMLElement, value: string): Promise<boolean> {
+  try {
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return await typeInto(el, value);
     el.focus();
-    el.textContent = value;
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    let ok = false;
+    try {
+      ok = document.execCommand('insertText', false, value);
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      el.textContent = value;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+    }
+    el.blur();
     return true;
   } catch {
     return false;
@@ -249,19 +294,18 @@ export function blankInputs(): HTMLInputElement[] {
   return blankItems().map((b) => b.input);
 }
 
-/** 用原生 setter + input 事件写值（React 受控输入才认） */
-export function fillBlanks(words: string[]): number {
+/**
+ * 填空：逐空走真实输入路径（focus → 全选 → insertText → blur → 等待）。
+ * 必须逐个 await，站点要在每次输入后更新 state，连发事件会丢值。
+ */
+export async function fillBlanks(words: string[], stepMs = 140): Promise<number> {
   const items = blankItems();
   let n = 0;
-  items.forEach((b, i) => {
+  for (let i = 0; i < items.length; i += 1) {
     const w = words[i];
-    if (typeof w !== 'string') return;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    setter?.call(b.input, w);
-    b.input.dispatchEvent(new Event('input', { bubbles: true }));
-    b.input.dispatchEvent(new Event('change', { bubbles: true }));
-    if (b.input.value === w) n += 1;
-  });
+    if (typeof w !== 'string') continue;
+    if (await typeInto(items[i].input, w, stepMs)) n += 1;
+  }
   return n;
 }
 

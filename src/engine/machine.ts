@@ -131,9 +131,9 @@ export async function runCurrentGroup(): Promise<void> {
       sentences: items.map((b) => ({ index: b.index, sentence: b.sentence })),
     });
     assertRunning();
-    const filled = fillBlanks(judged.words);
+    const filled = await fillBlanks(judged.words);
     setStatus({ filled: (status.filled ?? 0) + filled });
-    await sleep(300 + filled * 120);
+    await sleep(300 + filled * 60);
     const empty = emptyBlanks();
     if (empty.length) log(`第 ${empty.join(',')} 空没有答案（判题未给出），本次不提交`);
     if (getSettings().submitMode !== 'auto') {
@@ -170,7 +170,7 @@ export async function runCurrentGroup(): Promise<void> {
     const prompt = speakingPromptText();
     const text = await draftSpeakingScript(prompt, Math.max(60, getSettings().speaking.targetSec), 'essay');
     const target = textInputs()[0];
-    if (target && fillTextArea(target, text)) {
+    if (target && (await fillTextArea(target, text))) {
       log('写作/简答题：已写入文本域（是否提交取决于「提交」设置）');
       if (getSettings().submitMode === 'auto') {
         setStatus({ state: 'submitting' });

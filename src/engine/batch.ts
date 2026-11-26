@@ -268,10 +268,10 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
             sentences: items.map((b) => ({ index: b.index, sentence: b.sentence })),
           });
           assertRunning();
-          const filled = fillBlanks(judged.words);
+          const filled = await fillBlanks(judged.words);
           handled += 1;
           setStatus({ filled: (getStatus().filled ?? 0) + filled });
-          await sleep(300 + filled * 120);
+          await sleep(300 + filled * 60);
 
           const empty = emptyBlanks();
           if (empty.length) log(`第 ${empty.join(',')} 空没有答案（判题未给出），该组不提交`);
@@ -322,7 +322,7 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
           assertRunning();
           setStatus({ kind: 'writing', script: text });
           const target = textInputs()[0];
-          if (target && fillTextArea(target, text)) {
+          if (target && (await fillTextArea(target, text))) {
             handled += 1;
             if (settings.submitMode === 'auto') {
               const outcome = await submitCurrentGroup(true);

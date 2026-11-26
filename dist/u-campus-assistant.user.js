@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         U校园助手
 // @namespace    https://github.com/whitecat346/u-campus-assistant
-// @version      0.6.5
+// @version      0.6.6
 // @author       whitecat346
 // @description  自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）
 // @icon         https://u.unipus.cn/favicon.ico
@@ -11920,21 +11920,55 @@
 		const edits = Array.from(document.querySelectorAll("[contenteditable=\"true\"]"));
 		return [...areas, ...edits];
 	}
-	function fillTextArea(el, value) {
+	var sleep$3 = (ms) => new Promise((r) => window.setTimeout(r, ms));
+	async function typeInto(el, value, stepMs = 120) {
 		try {
-			if (el instanceof HTMLTextAreaElement) {
-				(Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set)?.call(el, value);
-				el.dispatchEvent(new Event("input", { bubbles: true }));
-				el.dispatchEvent(new Event("change", { bubbles: true }));
-				return el.value === value;
-			}
+			el.scrollIntoView({ block: "center" });
+		} catch {}
+		el.focus();
+		try {
+			el.select();
+		} catch {}
+		let ok = false;
+		try {
+			ok = document.execCommand("insertText", false, value);
+		} catch {
+			ok = false;
+		}
+		if (!ok || el.value !== value) {
+			const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+			Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
+			el.dispatchEvent(new Event("input", { bubbles: true }));
+			el.dispatchEvent(new Event("change", { bubbles: true }));
+		}
+		el.blur();
+		if (stepMs > 0) await sleep$3(stepMs);
+		return el.value === value;
+	}
+	async function fillTextArea(el, value) {
+		try {
+			if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return await typeInto(el, value);
 			el.focus();
-			el.textContent = value;
-			el.dispatchEvent(new InputEvent("input", {
-				bubbles: true,
-				data: value,
-				inputType: "insertText"
-			}));
+			const range = document.createRange();
+			range.selectNodeContents(el);
+			const sel = window.getSelection();
+			sel?.removeAllRanges();
+			sel?.addRange(range);
+			let ok = false;
+			try {
+				ok = document.execCommand("insertText", false, value);
+			} catch {
+				ok = false;
+			}
+			if (!ok) {
+				el.textContent = value;
+				el.dispatchEvent(new InputEvent("input", {
+					bubbles: true,
+					data: value,
+					inputType: "insertText"
+				}));
+			}
+			el.blur();
 			return true;
 		} catch {
 			return false;
@@ -11960,17 +11994,14 @@
 		});
 		return out;
 	}
-	function fillBlanks(words) {
+	async function fillBlanks(words, stepMs = 140) {
 		const items = blankItems();
 		let n = 0;
-		items.forEach((b, i) => {
+		for (let i = 0; i < items.length; i += 1) {
 			const w = words[i];
-			if (typeof w !== "string") return;
-			(Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set)?.call(b.input, w);
-			b.input.dispatchEvent(new Event("input", { bubbles: true }));
-			b.input.dispatchEvent(new Event("change", { bubbles: true }));
-			if (b.input.value === w) n += 1;
-		});
+			if (typeof w !== "string") continue;
+			if (await typeInto(items[i].input, w, stepMs)) n += 1;
+		}
 		return n;
 	}
 	function emptyBlanks() {
@@ -12004,6 +12035,21 @@
 		return visibleButtons().find((b) => (b.innerText || "").trim() === label) ?? null;
 	}
 	var sleep$2 = (ms) => new Promise((r) => window.setTimeout(r, ms));
+	function dialogText() {
+		return Array.from(document.querySelectorAll("[class*=\"dialog\"], [class*=\"Dialog\"]")).filter((d) => !!d.offsetParent && (d.innerText || "").trim().length > 0).map((d) => (d.innerText || "").replace(/\s+/g, " ").trim()).filter((t) => t.length > 4).join(" | ").slice(0, 200);
+	}
+	function hintText() {
+		return Array.from(document.querySelectorAll("body *")).filter((d) => d.children.length === 0 && !!d.offsetParent && (d.textContent || "").trim()).map((d) => (d.textContent || "").replace(/\s+/g, " ").trim()).filter((t) => /未填|请完成|完成后再|不能为空|未作答|作答后再|稍后重试/.test(t) && t.length < 100)[0] ?? "";
+	}
+	async function waitButton(label, timeoutMs) {
+		const deadline = Date.now() + timeoutMs;
+		do {
+			const b = findButton(label);
+			if (b) return b;
+			await sleep$2(200);
+		} while (Date.now() < deadline);
+		return null;
+	}
 	async function submitCurrentGroup(accept = true) {
 		const submit = Array.from(document.querySelectorAll("button")).find((b) => (b.innerText || "").trim() === "提交" && !b.disabled && !!(b.offsetWidth || b.offsetHeight));
 		if (!submit) return {
@@ -12011,35 +12057,41 @@
 			message: "未找到可用的「提交」按钮"
 		};
 		submit.click();
-		await sleep$2(700);
-		let submitted = false;
-		for (let round = 0; round < 4; round++) {
-			const ok = findButton("确定");
-			if (ok) {
-				ok.click();
-				await sleep$2(500);
-				continue;
-			}
+		let sawConfirm = false;
+		const ok = await waitButton("确定", 6e3);
+		if (ok) {
+			ok.click();
+			await sleep$2(500);
+		}
+		const deadline = Date.now() + 5e3;
+		while (Date.now() < deadline) {
 			const yes = findButton("确认");
 			const no = findButton("取消");
 			if (yes || no) {
+				sawConfirm = true;
 				if (accept && yes) {
 					yes.click();
-					submitted = true;
-					await sleep$2(1200);
+					await sleep$2(1500);
 				} else if (no) {
 					no.click();
 					await sleep$2(300);
 				}
 				break;
 			}
-			await sleep$2(400);
+			await sleep$2(200);
 		}
 		const m = document.body.innerText.match(/(本次得分[：:]?\s*[\d.]+[^\n]{0,20}|提交成功[^\n]{0,20}|小U[^\n]{0,30})/);
-		const message = m ? m[1].trim() : void 0;
-		if (submitted) log(`已提交：${message ?? "（无提示）"}`);
+		const message = (m ? m[1].trim() : "") || hintText() || dialogText() || void 0;
+		if (!sawConfirm) {
+			log(`提交未走到确认框（${message ?? "页面无提示"}）`);
+			return {
+				submitted: false,
+				message: message ?? "未出现确认弹窗（站点可能认为还有题未完成）"
+			};
+		}
+		if (accept) log(`已提交：${message ?? "（无提示）"}`);
 		return {
-			submitted,
+			submitted: accept,
 			message
 		};
 	}
@@ -12510,9 +12562,9 @@
 				}))
 			});
 			assertRunning();
-			const filled = fillBlanks(judged.words);
+			const filled = await fillBlanks(judged.words);
 			setStatus({ filled: (status.filled ?? 0) + filled });
-			await sleep$1(300 + filled * 120);
+			await sleep$1(300 + filled * 60);
 			const empty = emptyBlanks();
 			if (empty.length) log(`第 ${empty.join(",")} 空没有答案（判题未给出），本次不提交`);
 			if (getSettings().submitMode !== "auto") {
@@ -12555,7 +12607,7 @@
 		if (kind === "writing") {
 			const text = await draftSpeakingScript(speakingPromptText(), Math.max(60, getSettings().speaking.targetSec), "essay");
 			const target = textInputs()[0];
-			if (target && fillTextArea(target, text)) {
+			if (target && await fillTextArea(target, text)) {
 				log("写作/简答题：已写入文本域（是否提交取决于「提交」设置）");
 				if (getSettings().submitMode === "auto") {
 					setStatus({ state: "submitting" });
@@ -12829,10 +12881,10 @@
 							}))
 						});
 						assertRunning();
-						const filled = fillBlanks(judged.words);
+						const filled = await fillBlanks(judged.words);
 						handled += 1;
 						setStatus({ filled: (getStatus().filled ?? 0) + filled });
-						await sleep(300 + filled * 120);
+						await sleep(300 + filled * 60);
 						const empty = emptyBlanks();
 						if (empty.length) log(`第 ${empty.join(",")} 空没有答案（判题未给出），该组不提交`);
 						if (settings.submitMode === "auto") {
@@ -12879,7 +12931,7 @@
 							script: text
 						});
 						const target = textInputs()[0];
-						if (target && fillTextArea(target, text)) {
+						if (target && await fillTextArea(target, text)) {
 							handled += 1;
 							if (settings.submitMode === "auto") {
 								const outcome = await submitCurrentGroup(true);
@@ -13721,7 +13773,7 @@
 		if (document.getElementById(HOST_ID)) return;
 		const host = document.createElement("div");
 		host.id = HOST_ID;
-		host.dataset.ucVersion = "0.6.5";
+		host.dataset.ucVersion = "0.6.6";
 		const shadow = host.attachShadow({ mode: "open" });
 		const style = document.createElement("style");
 		style.textContent = PANEL_CSS;
@@ -13730,7 +13782,7 @@
 		shadow.appendChild(root);
 		document.documentElement.appendChild(host);
 		(0, import_client.createRoot)(root).render((0, import_jsx_runtime.jsx)(App, {}));
-		log(`已注入 ${location.href} (v0.6.5)`);
+		log(`已注入 ${location.href} (v0.6.6)`);
 		window.setTimeout(() => {
 			resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${e.message}`));
 		}, 2500);

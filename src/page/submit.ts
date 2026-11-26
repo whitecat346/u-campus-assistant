@@ -14,6 +14,40 @@ function findButton(label: string): HTMLButtonElement | null {
 
 const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
+/** 当前可见的弹窗文字（拼一起，便于确认走到了哪一层） */
+function dialogText(): string {
+  const boxes = Array.from(document.querySelectorAll<HTMLElement>('[class*="dialog"], [class*="Dialog"]')).filter(
+    (d) => !!d.offsetParent && (d.innerText || '').trim().length > 0,
+  );
+  return boxes
+    .map((d) => (d.innerText || '').replace(/\s+/g, ' ').trim())
+    .filter((t) => t.length > 4)
+    .join(' | ')
+    .slice(0, 200);
+}
+
+/** 页面上的提示气泡（提交失败/未完成时站点会给一句） */
+function hintText(): string {
+  const els = Array.from(document.querySelectorAll<HTMLElement>('body *')).filter(
+    (d) => d.children.length === 0 && !!d.offsetParent && (d.textContent || '').trim(),
+  );
+  const hit = els
+    .map((d) => (d.textContent || '').replace(/\s+/g, ' ').trim())
+    .filter((t) => /未填|请完成|完成后再|不能为空|未作答|作答后再|稍后重试/.test(t) && t.length < 100);
+  return hit[0] ?? '';
+}
+
+/** 轮询等按钮出现 */
+async function waitButton(label: string, timeoutMs: number): Promise<HTMLButtonElement | null> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const b = findButton(label);
+    if (b) return b;
+    await sleep(200);
+  } while (Date.now() < deadline);
+  return null;
+}
+
 export interface SubmitOutcome {
   submitted: boolean;
   /** 页面提示/得分气泡文字（若有） */
@@ -31,39 +65,44 @@ export async function submitCurrentGroup(accept = true): Promise<SubmitOutcome> 
   if (!submit) return { submitted: false, message: '未找到可用的「提交」按钮' };
 
   submit.click();
-  await sleep(700);
+  let sawConfirm = false;
 
-  // 依次处理：信息框「确定」→ 确认框「确认」/「取消」
-  let submitted = false;
-  for (let round = 0; round < 4; round++) {
-    const ok = findButton('确定');
-    if (ok) {
-      ok.click();
-      await sleep(500);
-      continue;
-    }
+  // 第一层：信息框「确定」
+  const ok = await waitButton('确定', 6000);
+  if (ok) {
+    ok.click();
+    await sleep(500);
+  }
+
+  // 第二层：确认框「确认」/「取消」——只有站点认为作答完整时才会出现
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
     const yes = findButton('确认');
     const no = findButton('取消');
     if (yes || no) {
+      sawConfirm = true;
       if (accept && yes) {
         yes.click();
-        submitted = true;
-        await sleep(1200);
+        await sleep(1500);
       } else if (no) {
         no.click();
         await sleep(300);
       }
       break;
     }
-    await sleep(400);
+    await sleep(200);
   }
 
-  // 抓取页面反馈（有的题会弹「本次得分」）
   const text = document.body.innerText;
   const m = text.match(/(本次得分[：:]?\s*[\d.]+[^\n]{0,20}|提交成功[^\n]{0,20}|小U[^\n]{0,30})/);
-  const message = m ? m[1].trim() : undefined;
-  if (submitted) log(`已提交：${message ?? '（无提示）'}`);
-  return { submitted, message };
+  const message = (m ? m[1].trim() : '') || hintText() || dialogText() || undefined;
+
+  if (!sawConfirm) {
+    log(`提交未走到确认框（${message ?? '页面无提示'}）`);
+    return { submitted: false, message: message ?? '未出现确认弹窗（站点可能认为还有题未完成）' };
+  }
+  if (accept) log(`已提交：${message ?? '（无提示）'}`);
+  return { submitted: accept, message };
 }
 
 /** 读取提交后才出现的「正确答案 / 解析」区域（用于回填校验，不参与作答） */

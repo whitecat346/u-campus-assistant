@@ -33,7 +33,7 @@
 2. 点这个链接装脚本（jsDelivr CDN，国内可达；GitHub 直链 `raw.githubusercontent.com` 在部分网络下 DNS 不通）：
 
    ```
-   https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.2/dist/u-campus-assistant.user.js
+   https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.3/dist/u-campus-assistant.user.js
 
    > 链接里的 @v版本号 请对照 [Tags](https://github.com/whitecat346/u-campus-assistant/tags) 换成最新版；@main 的 CDN 缓存会滞后，不建议用。
    ```
@@ -118,7 +118,7 @@ npm run typecheck
 发布新版本：`npm version <x.y.z>` → `npm run build` → commit → `git push` → 打 tag → 清 CDN 缓存：
 
 ```
-node -e "fetch('https://purge.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.2/dist/u-campus-assistant.user.js').then(r=>r.text()).then(console.log)"
+node -e "fetch('https://purge.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.3/dist/u-campus-assistant.user.js').then(r=>r.text()).then(console.log)"
 ```
 
 ## 常见问题
@@ -128,6 +128,17 @@ node -e "fetch('https://purge.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.
 - **判题置信度低 / 有空题时不提交**：这是故意的安全阀，只记录第一次得分的规则下，宁可留给你手动做。
 - **得分只记录第一次提交**：U校园前端弹窗原文如此，脚本无法改善已提交的分数。
 - **`ASR 失败`**：本机 `u-campus-asr` 没起，或没装模型；不影响听力判题（只是少了 ASR 兜底）。
+
+## 更新记录
+
+- **0.7.3** — 多小题书面题按「题目要求」选作答形态：词云造句 / 句子改错（听原文定位错误、只改错处）/ 通用兜底；改错题把听力原文与页面自带参考答案一起喂给模型；模型失败时回填页面参考答案，避免留空被判未完成。
+- **0.7.2** — 更新地址从 jsDelivr 的 `@main` 改为按版本固化的 `@v<版本>` tag 路径（`@main` 的 CDN 缓存实测滞后多个版本，导致 Tampermonkey 永远看不到更新）。
+- **0.7.1** — 「一小题一个输入框」的书面题：逐框生成逐框写入，兼容多图多框；答案对齐页面自带示例。
+- **0.7.0** — 「选合适表达补全对话」题型：按内容题数与页面单选组数对齐取帧，把左栏对话正文作为判题上下文。
+- **0.6.11** — 考试页识别改用 DOM 兜底（考试是嵌在课程页里的跨域 iframe，`window.open` 后 `location.href` 仍可能是 `about:blank`）。
+- **0.6.10 / 0.6.9** — 考试（作业与测试系统）支持：多段材料 × 多题、录音里念题干、按段 ASR → 判题 → 按展示顺序 A/B/C/D 点选。
+- **0.6.6 / 0.6.7** — 填空提交修复：老版 React 受控输入只认真实编辑路径（`execCommand('insertText')`），只派发 `input` 事件时站点 state 收不到值。
+- **0.6.0** — 听力题默认自动提交；口语短稿分形态（演讲/朗读/对话/作文）；面板逐题刷新。
 
 ## 免责声明
 

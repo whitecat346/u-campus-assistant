@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         U校园助手
 // @namespace    https://github.com/whitecat346/u-campus-assistant
-// @version      0.6.8
+// @version      0.6.9
 // @author       whitecat346
 // @description  自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）
 // @icon         https://u.unipus.cn/favicon.ico
@@ -11778,6 +11778,7 @@
 		}
 		if (!/(^|\.)unipus\.cn$/.test(u.hostname)) return "unknown";
 		if (u.hostname === "ucontent.unipus.cn" && u.pathname.includes("/pc.html") && parseAnswerRoute(url)) return "answering";
+		if (/(^|\.)uexercise\.unipus\.cn$/.test(u.hostname)) return "exam";
 		if (u.hostname === "u.unipus.cn" && /\/student\/mycourse\/courseCatalog/.test(u.pathname)) return "catalog";
 		return "portal";
 	}
@@ -11920,7 +11921,7 @@
 		const edits = Array.from(document.querySelectorAll("[contenteditable=\"true\"]"));
 		return [...areas, ...edits];
 	}
-	var sleep$3 = (ms) => new Promise((r) => window.setTimeout(r, ms));
+	var sleep$4 = (ms) => new Promise((r) => window.setTimeout(r, ms));
 	async function typeInto(el, value, stepMs = 120) {
 		try {
 			el.scrollIntoView({ block: "center" });
@@ -11942,7 +11943,7 @@
 			el.dispatchEvent(new Event("change", { bubbles: true }));
 		}
 		el.blur();
-		if (stepMs > 0) await sleep$3(stepMs);
+		if (stepMs > 0) await sleep$4(stepMs);
 		return el.value === value;
 	}
 	async function fillTextArea(el, value) {
@@ -12034,7 +12035,7 @@
 	function findButton(label) {
 		return visibleButtons().find((b) => (b.innerText || "").trim() === label) ?? null;
 	}
-	var sleep$2 = (ms) => new Promise((r) => window.setTimeout(r, ms));
+	var sleep$3 = (ms) => new Promise((r) => window.setTimeout(r, ms));
 	function dialogText() {
 		return Array.from(document.querySelectorAll("[class*=\"dialog\"], [class*=\"Dialog\"]")).filter((d) => !!d.offsetParent && (d.innerText || "").trim().length > 0).map((d) => (d.innerText || "").replace(/\s+/g, " ").trim()).filter((t) => t.length > 4).join(" | ").slice(0, 200);
 	}
@@ -12046,7 +12047,7 @@
 		do {
 			const b = findButton(label);
 			if (b) return b;
-			await sleep$2(200);
+			await sleep$3(200);
 		} while (Date.now() < deadline);
 		return null;
 	}
@@ -12061,7 +12062,7 @@
 		const ok = await waitButton("确定", 6e3);
 		if (ok) {
 			ok.click();
-			await sleep$2(500);
+			await sleep$3(500);
 		}
 		const deadline = Date.now() + 5e3;
 		while (Date.now() < deadline) {
@@ -12071,14 +12072,14 @@
 				sawConfirm = true;
 				if (accept && yes) {
 					yes.click();
-					await sleep$2(1500);
+					await sleep$3(1500);
 				} else if (no) {
 					no.click();
-					await sleep$2(300);
+					await sleep$3(300);
 				}
 				break;
 			}
-			await sleep$2(200);
+			await sleep$3(200);
 		}
 		const m = document.body.innerText.match(/(本次得分[：:]?\s*[\d.]+[^\n]{0,20}|提交成功[^\n]{0,20}|小U[^\n]{0,30})/);
 		const message = (m ? m[1].trim() : "") || hintText() || dialogText() || void 0;
@@ -12478,6 +12479,92 @@
 			maxTokens: 2400
 		})).replace(/^["']|["']$/g, "").replace(/\r\n/g, "\n").trim();
 	}
+	var EXAM_SYS = [
+		"你是一位英语听力命题专家，正在替中国大学生做「大学英语听说」的期末考试听力选择题。",
+		"这段录音里会先朗读材料，再逐题朗读题干与四个选项；页面只给出选项文字，题干只在录音里。",
+		"作答方法：",
+		"1) 先把录音里听到的每道题的题干找出来（第 1 题、第 2 题……按出现顺序），再对照选项；",
+		"2) 正确项必须能在材料原文或题干本身找到依据；与原文矛盾、原文未提及的选项一律排除；",
+		"3) 数字、时间、地点、原因、态度务必回原文核对，不要凭常识脑补；",
+		"4) 原文来自语音识别，可能有错词与人名错误，请按上下文纠正后再判断。",
+		"必须严格输出 JSON：{\"letters\":[\"A\",\"C\",\"B\"],\"confidence\":0.0-1.0,\"note\":\"简短理由\"}",
+		"letters 按题目顺序排列，长度必须等于题目数量，一个都不能省；不确定也要给一个。不要输出任何多余文字。"
+	].join("\n");
+	function parseExamJudge(raw, questions) {
+		const text = stripFence(raw);
+		let obj = null;
+		try {
+			obj = JSON.parse(text);
+		} catch {
+			const m = text.match(/\{[\s\S]*\}/);
+			if (m) try {
+				obj = JSON.parse(m[0]);
+			} catch {}
+		}
+		if (!obj) throw new Error(`LLM 输出无法解析：${text.slice(0, 200)}`);
+		const norm = (v) => {
+			const s = String(v ?? "").trim().toUpperCase();
+			return /^[A-Z]$/.test(s) ? s : "";
+		};
+		const answers = {};
+		if (Array.isArray(obj.letters)) obj.letters.forEach((v, i) => {
+			const q = questions[i];
+			const letter = norm(v);
+			if (q && letter) answers[q.num] = letter;
+		});
+		if (obj.answers && typeof obj.answers === "object") for (const [k, v] of Object.entries(obj.answers)) {
+			const n = Number(String(k).replace(/\D/g, ""));
+			const q = questions.find((x) => x.num === n) ?? questions[n - 1];
+			const letter = norm(v);
+			if (q && letter && !(q.num in answers)) answers[q.num] = letter;
+		}
+		const confidence = Math.min(1, Math.max(0, Number(obj.confidence ?? .6) || .6));
+		if (!Object.keys(answers).length) throw new Error(`LLM 未给出任何答案：${text.slice(0, 200)}`);
+		return {
+			answers,
+			confidence,
+			note: obj.note
+		};
+	}
+	async function judgeExamSet(input) {
+		const qBlock = input.questions.map((q) => {
+			const opts = q.options.map((o) => `${o.letter}. ${o.text}`).join("\n");
+			return `第${q.num}题\n${opts}`;
+		}).join("\n\n");
+		const user = [
+			input.part ? `本段材料：${input.part}` : "",
+			`录音转写（含朗读出来的题干，可能有识别错词）：\n${input.transcript.slice(0, 6e3)}`,
+			`题目选项：\n${qBlock}`,
+			"只输出 JSON。"
+		].filter(Boolean).join("\n\n");
+		const call = (extra) => chat([{
+			role: "system",
+			content: EXAM_SYS
+		}, {
+			role: "user",
+			content: user + extra
+		}], {
+			temperature: .1,
+			maxTokens: 2400
+		});
+		let raw = await call("");
+		let result = parseExamJudge(raw, input.questions);
+		for (let round = 0; round < 2; round++) {
+			const missing = input.questions.map((q) => q.num).filter((n) => !(n in result.answers));
+			if (!missing.length) break;
+			log(`考试判题缺少第 ${missing.join(",")} 题的答案，补问一次`);
+			raw = await call(`\n\n上一次只给了部分答案，请补齐这些题：${missing.join(",")}，仍然只输出完整 JSON。`);
+			const more = parseExamJudge(raw, input.questions);
+			const merged = { ...more.answers };
+			for (const [k, v] of Object.entries(result.answers)) merged[Number(k)] = v;
+			result = {
+				...more,
+				answers: merged,
+				confidence: Math.min(more.confidence, result.confidence)
+			};
+		}
+		return result;
+	}
 	var status = {
 		state: "idle",
 		filled: 0,
@@ -12519,7 +12606,7 @@
 		setStatus({ state: "stopped" });
 		log("引擎已急停");
 	}
-	var sleep$1 = (ms) => new Promise((r) => window.setTimeout(r, ms));
+	var sleep$2 = (ms) => new Promise((r) => window.setTimeout(r, ms));
 	async function runCurrentGroup() {
 		const route = parseAnswerRoute();
 		if (!route) {
@@ -12564,7 +12651,7 @@
 			assertRunning();
 			const filled = await fillBlanks(judged.words);
 			setStatus({ filled: (status.filled ?? 0) + filled });
-			await sleep$1(300 + filled * 60);
+			await sleep$2(300 + filled * 60);
 			const empty = emptyBlanks();
 			if (empty.length) log(`第 ${empty.join(",")} 空没有答案（判题未给出），本次不提交`);
 			if (getSettings().submitMode !== "auto") {
@@ -12651,7 +12738,7 @@
 		log(`判题结果：${JSON.stringify(judged.answers)}（置信度 ${judged.confidence.toFixed(2)}）${judged.note ? ` — ${judged.note}` : ""}`);
 		const filled = applyChoices(judged.answers);
 		setStatus({ filled: (status.filled ?? 0) + filled });
-		await sleep$1(400 + filled * 150);
+		await sleep$2(400 + filled * 150);
 		const missing = unansweredGroups();
 		if (missing.length) log(`第 ${missing.map((i) => i + 1).join(",")} 题没有答案（判题未给出），本次不提交`);
 		const mode = getSettings().submitMode;
@@ -12748,7 +12835,7 @@
 	function isExamUnit(name) {
 		return /midterm|final|test|期中|期末|测试/i.test(name);
 	}
-	var sleep = (ms) => new Promise((r) => window.setTimeout(r, ms));
+	var sleep$1 = (ms) => new Promise((r) => window.setTimeout(r, ms));
 	function jitterMs() {
 		const s = getSettings();
 		const min = Math.min(s.delayMinMs, s.delayMaxMs);
@@ -12776,7 +12863,7 @@
 		while (Date.now() - started < timeoutMs) {
 			assertRunning();
 			if (await waitForNewCapture(from, 1e3)) {
-				await sleep(800);
+				await sleep$1(800);
 				return true;
 			}
 			if (!domReadyAt && Date.now() - started > 5e3 && pageLooksLoaded()) domReadyAt = Date.now();
@@ -12861,7 +12948,7 @@
 					}
 					if (kind === "cloze") {
 						const waitMs = Math.max(500, settings.wait.questionsMs | 0);
-						for (let waited = 0; waited < waitMs && !blankItems().length; waited += 300) await sleep(300);
+						for (let waited = 0; waited < waitMs && !blankItems().length; waited += 300) await sleep$1(300);
 						const items = blankItems();
 						if (!items.length) {
 							log("填空页没有找到空位，跳过");
@@ -12884,7 +12971,7 @@
 						const filled = await fillBlanks(judged.words);
 						handled += 1;
 						setStatus({ filled: (getStatus().filled ?? 0) + filled });
-						await sleep(300 + filled * 60);
+						await sleep$1(300 + filled * 60);
 						const empty = emptyBlanks();
 						if (empty.length) log(`第 ${empty.join(",")} 空没有答案（判题未给出），该组不提交`);
 						if (settings.submitMode === "auto") {
@@ -12956,7 +13043,7 @@
 					let ctx = content;
 					let questions = ctx ? questionsFromContent(ctx) : [];
 					for (let waited = 0; waited < waitMs && !questions.length; waited += 300) {
-						await sleep(300);
+						await sleep$1(300);
 						assertRunning();
 						ctx = latestQuestionsContent() ?? ctx;
 						questions = ctx ? questionsFromContent(ctx) : [];
@@ -12976,7 +13063,7 @@
 					const filled = applyChoices(judged.answers);
 					handled += 1;
 					setStatus({ filled: (getStatus().filled ?? 0) + filled });
-					await sleep(400 + filled * 120);
+					await sleep$1(400 + filled * 120);
 					const missing = unansweredGroups();
 					if (missing.length) log(`第 ${missing.map((i) => i + 1).join(",")} 题没有答案（判题未给出），该组不提交`);
 					if (settings.submitMode === "auto") {
@@ -13002,7 +13089,7 @@
 				state.skipped = skipped;
 				saveBatchState(state);
 				assertRunning();
-				await sleep(jitterMs());
+				await sleep$1(jitterMs());
 			}
 			saveBatchState(null);
 			setStatus({
@@ -13130,6 +13217,290 @@
 		log(`自动续跑：从第 ${state.index + 1}/${state.plan.length} 条继续`);
 		return runPlan(state);
 	}
+	var sleep = (ms) => new Promise((r) => window.setTimeout(r, ms));
+	function isExamHost(host = location.hostname) {
+		return /(^|\.)uexercise\.unipus\.cn$/.test(host);
+	}
+	function isExamPage() {
+		return isExamHost() && document.querySelectorAll(".itest-ques-set").length > 0;
+	}
+	function optionLetter(labelText, fallbackIndex) {
+		const m = labelText.match(/^\s*([A-Z])[.、)]\s*([\s\S]*)$/);
+		if (m) return {
+			letter: m[1],
+			text: m[2].replace(/\s+/g, " ").trim()
+		};
+		return {
+			letter: String.fromCharCode(65 + fallbackIndex),
+			text: labelText.replace(/\s+/g, " ").trim()
+		};
+	}
+	function examSets() {
+		const out = [];
+		Array.from(document.querySelectorAll(".itest-ques-set")).forEach((set) => {
+			const section = set.closest(".itest-section");
+			const qid = set.getAttribute("questionid") || "";
+			const resEl = set.querySelector(".itest-hear-reslist span");
+			let audioUrl = "";
+			let duration = 0;
+			if (resEl) try {
+				const arr = JSON.parse((resEl.textContent || "").trim());
+				if (Array.isArray(arr)) {
+					audioUrl = String(arr[0] ?? "");
+					duration = Number(arr[1] ?? 0) || 0;
+				}
+			} catch {
+				audioUrl = "";
+			}
+			const questions = [];
+			set.querySelectorAll(".css-danxuan.row").forEach((row) => {
+				const numText = (row.querySelector(".option-head .nu")?.textContent || "").replace(/[^0-9]/g, "");
+				const num = Number(numText) || questions.length + 1;
+				const radios = Array.from(row.querySelectorAll("input[type=radio]"));
+				if (!radios.length) return;
+				const options = radios.map((r, i) => {
+					return optionLetter(r.closest("label")?.textContent || "", i);
+				});
+				questions.push({
+					num,
+					options,
+					radios
+				});
+			});
+			if (questions.length) out.push({
+				qid,
+				part: section?.getAttribute("part1") || void 0,
+				sectionKey: section?.getAttribute("sectionKey") || void 0,
+				audioUrl,
+				duration,
+				questions
+			});
+		});
+		return out;
+	}
+	function checkedLetter(q) {
+		const i = q.radios.findIndex((r) => r.checked);
+		return i >= 0 ? q.options[i]?.letter ?? null : null;
+	}
+	function emptyExamQuestions() {
+		const out = [];
+		examSets().forEach((s) => {
+			s.questions.forEach((q) => {
+				if (checkedLetter(q) === null) out.push(q.num);
+			});
+		});
+		return out;
+	}
+	async function fillExamByNumber(answers, stepMs = 160) {
+		let filled = 0;
+		for (const set of examSets()) for (const q of set.questions) {
+			const want = answers[q.num];
+			if (!want) continue;
+			const idx = q.options.findIndex((o) => o.letter === want.toUpperCase());
+			if (idx < 0) {
+				log(`第 ${q.num} 题的选项里没有 ${want}`);
+				continue;
+			}
+			const radio = q.radios[idx];
+			if (!radio) continue;
+			radio.scrollIntoView({ block: "center" });
+			radio.click();
+			if (!radio.checked) {
+				radio.checked = true;
+				radio.dispatchEvent(new Event("change", { bubbles: true }));
+				radio.dispatchEvent(new Event("click", { bubbles: true }));
+			}
+			if (radio.checked) filled += 1;
+			await sleep(stepMs);
+		}
+		return filled;
+	}
+	function examSubmitButton() {
+		return Array.from(document.querySelectorAll("div.submit, .submit, a.submit, button.submit")).find((e) => /提交|交卷/.test((e.textContent || "").trim())) ?? null;
+	}
+	function examDialogText() {
+		return Array.from(document.querySelectorAll(".layui-layer, .layui-layer-content, .Popup, .popup-zz, .alert")).filter((e) => (e.offsetParent !== null || e.getClientRects().length > 0) && (e.textContent || "").trim().length > 0).map((e) => (e.textContent || "").replace(/\s+/g, " ").trim()).join(" | ").slice(0, 400);
+	}
+	async function clickExamDialogButton(labels, timeoutMs = 8e3) {
+		const start = Date.now();
+		while (Date.now() - start < timeoutMs) {
+			const hit = Array.from(document.querySelectorAll(".layui-layer a, .layui-layer button, .layui-layer span, .Popup a, .Popup span, .Popup button, .success-sure")).find((e) => {
+				const t = (e.textContent || "").trim();
+				return labels.includes(t) && (e.offsetParent !== null || e.getClientRects().length > 0);
+			});
+			if (hit) {
+				hit.click();
+				return (hit.textContent || "").trim();
+			}
+			await sleep(200);
+		}
+		return "";
+	}
+	async function submitExamPage() {
+		const btn = examSubmitButton();
+		if (!btn) return {
+			ok: false,
+			message: "页面上没找到「提交」按钮"
+		};
+		const before = examDialogText();
+		btn.click();
+		await sleep(1200);
+		let dlg = examDialogText();
+		if (!dlg || dlg === before) {
+			await sleep(1500);
+			dlg = examDialogText();
+		}
+		log(`提交弹窗：${dlg || "（没看到弹窗）"}`);
+		if (/未作答|未完成|还有\s*\d+\s*(个)?(空|题)|请完成/.test(dlg)) return {
+			ok: false,
+			message: `站点拒绝了提交：${dlg.slice(0, 120)}`
+		};
+		const first = await clickExamDialogButton([
+			"确定",
+			"确认",
+			"是",
+			"提交"
+		], 6e3);
+		if (first) log(`点了弹窗按钮：${first}`);
+		await sleep(1e3);
+		const dlg2 = examDialogText();
+		if (/交卷|提交后|不能再|确认/.test(dlg2)) {
+			log(`二次确认：${dlg2.slice(0, 120)}`);
+			const second = await clickExamDialogButton([
+				"确定",
+				"确认",
+				"交卷"
+			], 6e3);
+			if (second) log(`点了二次确认：${second}`);
+		}
+		await sleep(1500);
+		const after = examDialogText();
+		if (/提交成功|交卷成功|已交卷|考试结束|查看解析|成绩/.test(after) || !examSubmitButton()) return {
+			ok: true,
+			message: after.slice(0, 120) || "已提交"
+		};
+		return {
+			ok: false,
+			message: after ? `结果未知：${after.slice(0, 120)}` : "点完提交后页面没有明显反馈（可能已提交）"
+		};
+	}
+	var transcriptCache = new Map();
+	function asrReady() {
+		return !!getSettings().asr.baseURL;
+	}
+	async function transcriptOf(set, index, total) {
+		const cached = transcriptCache.get(set.audioUrl);
+		if (cached) return cached;
+		log(`[${index + 1}/${total}] 识别音频（${set.duration ? `${set.duration}s` : "时长未知"}）…`);
+		const text = ((await recognizeUrl(set.audioUrl)).text || "").replace(/<\|[^|]*\|>/g, "").trim();
+		if (text.length > 20) transcriptCache.set(set.audioUrl, text);
+		return text;
+	}
+	async function runExam() {
+		if (!isExamPage()) throw new Error("当前不是试题作答页");
+		const sets = examSets();
+		if (!sets.length) throw new Error("没有解析到试题（页面可能还没渲染完）");
+		const questions = sets.reduce((n, s) => n + s.questions.length, 0);
+		log(`考试页解析到 ${sets.length} 段材料 / ${questions} 题`);
+		if (!asrReady()) {
+			setStatus({ lastError: "未配置 ASR 地址：考试没有文字原文，必须先用 SenseVoice 识别音频" });
+			throw new Error("未配置 ASR 地址（设置页「ASR 地址」）");
+		}
+		setStatus({
+			state: "answering",
+			kind: "listening",
+			lastError: void 0,
+			filled: 0,
+			skipped: 0
+		});
+		const answers = {};
+		let lowConfidence = 0;
+		let recognized = 0;
+		for (let i = 0; i < sets.length; i++) {
+			const set = sets[i];
+			setStatus({ batch: {
+				total: sets.length,
+				index: i + 1,
+				done: i,
+				current: `${set.part ?? "材料"}（${set.questions.length} 题）`
+			} });
+			if (!set.audioUrl) {
+				log(`[${i + 1}/${sets.length}] 这段没有音频地址，跳过`);
+				continue;
+			}
+			let transcript = "";
+			try {
+				transcript = await transcriptOf(set, i, sets.length);
+			} catch (e) {
+				log(`[${i + 1}/${sets.length}] 识别失败：${e.message}`);
+			}
+			if (transcript.length < 20) {
+				log(`[${i + 1}/${sets.length}] 没拿到有效转写，这段先跳过`);
+				continue;
+			}
+			recognized += 1;
+			const judged = await judgeExamSet({
+				transcript,
+				part: set.part,
+				questions: set.questions
+			});
+			if (judged.confidence < .5) lowConfidence += 1;
+			for (const [k, v] of Object.entries(judged.answers)) answers[Number(k)] = v;
+			log(`[${i + 1}/${sets.length}] ${set.questions.map((q) => `${q.num}${judged.answers[q.num] ?? "?"}`).join(" ")}（置信度 ${judged.confidence.toFixed(2)}）`);
+		}
+		const filled = await fillExamByNumber(answers);
+		const missing = emptyExamQuestions();
+		setStatus({
+			filled,
+			skipped: missing.length,
+			state: "idle"
+		});
+		log(`已填 ${filled} / ${questions} 题；识别成功 ${recognized}/${sets.length} 段；低置信段 ${lowConfidence} 段`);
+		if (missing.length) log(`还没填的题：${missing.join(",")}（这几题的音频没识别出来或判题缺项，请人工确认）`);
+		else log("全部题目已填好。核对无误后点「提交试卷」——脚本不会自动交卷。");
+		return {
+			sets: sets.length,
+			questions,
+			filled,
+			missing,
+			lowConfidence
+		};
+	}
+	async function submitExam() {
+		const missing = emptyExamQuestions();
+		if (missing.length) {
+			log(`还有 ${missing.length} 题没填（${missing.join(",")}），不提交`);
+			setStatus({ lastError: `还有 ${missing.length} 题没填：${missing.join(",")}` });
+			return false;
+		}
+		const r = await submitExamPage();
+		if (r.ok) {
+			log(`交卷完成：${r.message}`);
+			setStatus({
+				lastError: void 0,
+				state: "idle"
+			});
+		} else {
+			log(`交卷未完成：${r.message}`);
+			setStatus({
+				lastError: r.message,
+				state: "failed"
+			});
+		}
+		return r.ok;
+	}
+	async function fillExam() {
+		try {
+			await runExam();
+		} catch (e) {
+			const msg = e.message;
+			log(`考试流程出错：${msg}`);
+			setStatus({
+				lastError: msg,
+				state: "failed"
+			});
+		}
+	}
 	function Panel({ onClose, settingsOnly = false }) {
 		const [tab, setTab] = (0, import_react.useState)(settingsOnly ? "settings" : "run");
 		const [settings, setSettings] = (0, import_react.useState)(getSettings);
@@ -13187,6 +13558,30 @@
 		(0, import_react.useEffect)(() => onPageChange(setPage), []);
 		const canAnswer = !settingsOnly && canStartAnswering(page);
 		const running = status.state !== "idle" && status.state !== "stopped" && status.state !== "failed";
+		const isExam = page === "exam";
+		let examInfo = {
+			sets: 0,
+			questions: 0
+		};
+		if (isExam) try {
+			const sets = examSets();
+			examInfo = {
+				sets: sets.length,
+				questions: sets.reduce((n, s) => n + s.questions.length, 0)
+			};
+		} catch {
+			examInfo = {
+				sets: 0,
+				questions: 0
+			};
+		}
+		const runExamFill = () => {
+			fillExam();
+		};
+		const runExamSubmit = () => {
+			if (!window.confirm("确定交卷吗？交卷后不能再修改答案。")) return;
+			submitExam();
+		};
 		const runBatch = () => {
 			startBatch().catch((e) => {
 				setLines(snapshot());
@@ -13214,7 +13609,7 @@
 						className: "uc-title",
 						children: ["U校园助手 ", (0, import_jsx_runtime.jsxs)("span", {
 							className: "uc-ver",
-							children: ["v", "0.6.8"]
+							children: ["v", "0.6.9"]
 						})]
 					}), (0, import_jsx_runtime.jsx)("button", {
 						className: "uc-btn",
@@ -13281,6 +13676,25 @@
 								children: settings.submitMode === "dryRun" ? "只填不交（dry-run）" : "自动提交（说类只出稿，永不提交）"
 							})]
 						}),
+						isExam && (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [(0, import_jsx_runtime.jsxs)("div", {
+							className: "uc-row",
+							children: [(0, import_jsx_runtime.jsx)("label", { children: "考试材料" }), (0, import_jsx_runtime.jsxs)("span", {
+								className: "uc-hint",
+								children: [
+									examInfo.sets,
+									" 段音频 / ",
+									examInfo.questions,
+									" 题"
+								]
+							})]
+						}), (0, import_jsx_runtime.jsx)("div", {
+							className: "uc-hint",
+							style: {
+								marginTop: 6,
+								lineHeight: 1.6
+							},
+							children: "考试页不给文字原文：每段音频先用 SenseVoice 转写，再按「题干在录音里」判题。 「判题并填入」只填不交；核对后再点「提交试卷」。交卷由你确认，脚本不会自动交卷。"
+						})] }),
 						status.batch && (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [(0, import_jsx_runtime.jsxs)("div", {
 							className: "uc-row",
 							children: [(0, import_jsx_runtime.jsx)("label", { children: "整课进度" }), (0, import_jsx_runtime.jsxs)("span", {
@@ -13403,7 +13817,19 @@
 					]
 				}), (0, import_jsx_runtime.jsx)("div", {
 					className: "uc-btns",
-					children: !running ? (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [(0, import_jsx_runtime.jsx)("button", {
+					children: !running ? isExam ? (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [(0, import_jsx_runtime.jsx)("button", {
+						className: "uc-btn primary",
+						disabled: !canAnswer,
+						onClick: runExamFill,
+						title: "逐段识别音频并判题填入选项",
+						children: "判题并填入"
+					}), (0, import_jsx_runtime.jsx)("button", {
+						className: "uc-btn",
+						disabled: !canAnswer,
+						onClick: runExamSubmit,
+						title: "所有题都填好后才可提交",
+						children: "提交试卷"
+					})] }) : (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [(0, import_jsx_runtime.jsx)("button", {
 						className: "uc-btn primary",
 						disabled: !canAnswer,
 						onClick: () => void startEngine(),
@@ -13777,7 +14203,7 @@
 		if (document.getElementById(HOST_ID)) return;
 		const host = document.createElement("div");
 		host.id = HOST_ID;
-		host.dataset.ucVersion = "0.6.8";
+		host.dataset.ucVersion = "0.6.9";
 		const shadow = host.attachShadow({ mode: "open" });
 		const style = document.createElement("style");
 		style.textContent = PANEL_CSS;
@@ -13786,7 +14212,7 @@
 		shadow.appendChild(root);
 		document.documentElement.appendChild(host);
 		(0, import_client.createRoot)(root).render((0, import_jsx_runtime.jsx)(App, {}));
-		log(`已注入 ${location.href} (v0.6.8)`);
+		log(`已注入 ${location.href} (v0.6.9)`);
 		window.setTimeout(() => {
 			resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${e.message}`));
 		}, 2500);

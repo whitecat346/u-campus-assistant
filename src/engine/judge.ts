@@ -6,6 +6,7 @@ import { recognizeUrl } from '../core/asr';
 import { getSettings } from '../core/settings';
 import { log } from '../core/log';
 import type { Question } from '../page/questions';
+import type { ExamQuestion } from '../page/exam';
 
 export interface JudgeInput {
   direction?: string;
@@ -315,4 +316,118 @@ export async function draftSpeakingScript(promptText: string, targetSec = 75, mo
     .replace(/^["']|["']$/g, '')
     .replace(/\r\n/g, '\n')
     .trim();
+}
+
+/* --------------------------- 考试（uexercise）判题 --------------------------- */
+
+const EXAM_SYS = [
+  '你是一位英语听力命题专家，正在替中国大学生做「大学英语听说」的期末考试听力选择题。',
+  '这段录音里会先朗读材料，再逐题朗读题干与四个选项；页面只给出选项文字，题干只在录音里。',
+  '作答方法：',
+  '1) 先把录音里听到的每道题的题干找出来（第 1 题、第 2 题……按出现顺序），再对照选项；',
+  '2) 正确项必须能在材料原文或题干本身找到依据；与原文矛盾、原文未提及的选项一律排除；',
+  '3) 数字、时间、地点、原因、态度务必回原文核对，不要凭常识脑补；',
+  '4) 原文来自语音识别，可能有错词与人名错误，请按上下文纠正后再判断。',
+  '必须严格输出 JSON：{"letters":["A","C","B"],"confidence":0.0-1.0,"note":"简短理由"}',
+  'letters 按题目顺序排列，长度必须等于题目数量，一个都不能省；不确定也要给一个。不要输出任何多余文字。',
+].join('\n');
+
+export interface ExamJudgeResult {
+  /** 题号（卷面 1 基）→ 选项字母 */
+  answers: Record<number, string>;
+  confidence: number;
+  note?: string;
+}
+
+export function parseExamJudge(raw: string, questions: ExamQuestion[]): ExamJudgeResult {
+  const text = stripFence(raw);
+  let obj: { letters?: unknown; answers?: Record<string, string>; confidence?: number; note?: string } | null = null;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        obj = JSON.parse(m[0]);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (!obj) throw new Error(`LLM 输出无法解析：${text.slice(0, 200)}`);
+
+  const norm = (v: unknown): string => {
+    const s = String(v ?? '').trim().toUpperCase();
+    return /^[A-Z]$/.test(s) ? s : '';
+  };
+  const answers: Record<number, string> = {};
+
+  if (Array.isArray(obj.letters)) {
+    obj.letters.forEach((v, i) => {
+      const q = questions[i];
+      const letter = norm(v);
+      if (q && letter) answers[q.num] = letter;
+    });
+  }
+  if (obj.answers && typeof obj.answers === 'object') {
+    for (const [k, v] of Object.entries(obj.answers)) {
+      const n = Number(String(k).replace(/\D/g, ''));
+      const q = questions.find((x) => x.num === n) ?? questions[n - 1];
+      const letter = norm(v);
+      if (q && letter && !(q.num in answers)) answers[q.num] = letter;
+    }
+  }
+  const confidence = Math.min(1, Math.max(0, Number(obj.confidence ?? 0.6) || 0.6));
+  if (!Object.keys(answers).length) throw new Error(`LLM 未给出任何答案：${text.slice(0, 200)}`);
+  return { answers, confidence, note: obj.note };
+}
+
+/**
+ * 一段材料（一个音频 + 2~4 题）判题：原文来自 ASR（录音里含朗读出来的题干）。
+ * 缺题会补问最多 2 轮，与课程内判题一致。
+ */
+export async function judgeExamSet(input: {
+  transcript: string;
+  part?: string;
+  questions: ExamQuestion[];
+}): Promise<ExamJudgeResult> {
+  const qBlock = input.questions
+    .map((q) => {
+      const opts = q.options.map((o) => `${o.letter}. ${o.text}`).join('\n');
+      return `第${q.num}题\n${opts}`;
+    })
+    .join('\n\n');
+
+  const user = [
+    input.part ? `本段材料：${input.part}` : '',
+    `录音转写（含朗读出来的题干，可能有识别错词）：\n${input.transcript.slice(0, 6000)}`,
+    `题目选项：\n${qBlock}`,
+    '只输出 JSON。',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const call = (extra: string) =>
+    chat(
+      [
+        { role: 'system', content: EXAM_SYS },
+        { role: 'user', content: user + extra },
+      ],
+      { temperature: 0.1, maxTokens: 2400 },
+    );
+
+  let raw = await call('');
+  let result = parseExamJudge(raw, input.questions);
+
+  for (let round = 0; round < 2; round++) {
+    const missing = input.questions.map((q) => q.num).filter((n) => !(n in result.answers));
+    if (!missing.length) break;
+    log(`考试判题缺少第 ${missing.join(',')} 题的答案，补问一次`);
+    raw = await call(`\n\n上一次只给了部分答案，请补齐这些题：${missing.join(',')}，仍然只输出完整 JSON。`);
+    const more = parseExamJudge(raw, input.questions);
+    const merged: Record<number, string> = { ...more.answers };
+    for (const [k, v] of Object.entries(result.answers)) merged[Number(k)] = v;
+    result = { ...more, answers: merged, confidence: Math.min(more.confidence, result.confidence) };
+  }
+  return result;
 }

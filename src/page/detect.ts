@@ -3,7 +3,8 @@
 // 目录页 = u.unipus.cn/user/student/mycourse/courseCatalog；门户 = u.unipus.cn 其它
 import { parseAnswerRoute } from '../core/api';
 
-export type PageKind = 'unknown' | 'portal' | 'catalog' | 'answering';
+// exam = 作业与测试系统（uexercise.unipus.cn），见 docs/PAGE-MAP.md §14
+export type PageKind = 'unknown' | 'portal' | 'catalog' | 'answering' | 'exam';
 
 export function detectPage(url: string = location.href): PageKind {
   let u: URL;
@@ -14,6 +15,8 @@ export function detectPage(url: string = location.href): PageKind {
   }
   if (!/(^|\.)unipus\.cn$/.test(u.hostname)) return 'unknown';
   if (u.hostname === 'ucontent.unipus.cn' && u.pathname.includes('/pc.html') && parseAnswerRoute(url)) return 'answering';
+  // 考试页：enter_unit_test 落地后整卷渲染在同一页（uexercise 域）
+  if (/(^|\.)uexercise\.unipus\.cn$/.test(u.hostname)) return 'exam';
   if (u.hostname === 'u.unipus.cn' && /\/student\/mycourse\/courseCatalog/.test(u.pathname)) return 'catalog';
   return 'portal';
 }

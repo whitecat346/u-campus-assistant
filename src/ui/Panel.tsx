@@ -3,6 +3,8 @@ import { getSettings, saveSettings, resetSettings, type Settings } from '../core
 import { canStartAnswering, detectPage, onPageChange } from '../page/detect';
 import { getStatus, onStatus, startEngine, pause, resume, stop, type EngineStatus } from '../engine/machine';
 import { startBatch } from '../engine/batch';
+import { fillExam, submitExam } from '../engine/exam';
+import { examSets } from '../page/exam';
 import { onLog, snapshot, type LogLine } from '../core/log';
 import { cachedUnits } from '../core/api';
 
@@ -73,6 +75,27 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
   const canAnswer = !settingsOnly && canStartAnswering(page);
   const running = status.state !== 'idle' && status.state !== 'stopped' && status.state !== 'failed';
 
+  // 考试页：整卷渲染在同一页，段数/题数直接从 DOM 读（一两秒一次，开销可忽略）
+  const isExam = page === 'exam';
+  let examInfo = { sets: 0, questions: 0 };
+  if (isExam) {
+    try {
+      const sets = examSets();
+      examInfo = { sets: sets.length, questions: sets.reduce((n, s) => n + s.questions.length, 0) };
+    } catch {
+      examInfo = { sets: 0, questions: 0 };
+    }
+  }
+
+  const runExamFill = () => {
+    void fillExam();
+  };
+
+  const runExamSubmit = () => {
+    if (!window.confirm('确定交卷吗？交卷后不能再修改答案。')) return;
+    void submitExam();
+  };
+
   const runBatch = () => {
     void startBatch().catch((e: Error) => {
       setLines(snapshot());
@@ -133,6 +156,20 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
               <label>提交策略</label>
               <span className="uc-hint">{settings.submitMode === 'dryRun' ? '只填不交（dry-run）' : '自动提交（说类只出稿，永不提交）'}</span>
             </div>
+            {isExam && (
+              <>
+                <div className="uc-row">
+                  <label>考试材料</label>
+                  <span className="uc-hint">
+                    {examInfo.sets} 段音频 / {examInfo.questions} 题
+                  </span>
+                </div>
+                <div className="uc-hint" style={{ marginTop: 6, lineHeight: 1.6 }}>
+                  考试页不给文字原文：每段音频先用 SenseVoice 转写，再按「题干在录音里」判题。
+                  「判题并填入」只填不交；核对后再点「提交试卷」。交卷由你确认，脚本不会自动交卷。
+                </div>
+              </>
+            )}
             {status.batch && (
               <>
                 <div className="uc-row">
@@ -228,14 +265,25 @@ export function Panel({ onClose, settingsOnly = false }: Props) {
           </div>
           <div className="uc-btns">
             {!running ? (
-              <>
-                <button className="uc-btn primary" disabled={!canAnswer} onClick={() => void startEngine()}>
-                  开始作答
-                </button>
-                <button className="uc-btn" disabled={!canAnswer} onClick={runBatch} title="遍历整门课未完成项">
-                  整课批量
-                </button>
-              </>
+              isExam ? (
+                <>
+                  <button className="uc-btn primary" disabled={!canAnswer} onClick={runExamFill} title="逐段识别音频并判题填入选项">
+                    判题并填入
+                  </button>
+                  <button className="uc-btn" disabled={!canAnswer} onClick={runExamSubmit} title="所有题都填好后才可提交">
+                    提交试卷
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="uc-btn primary" disabled={!canAnswer} onClick={() => void startEngine()}>
+                    开始作答
+                  </button>
+                  <button className="uc-btn" disabled={!canAnswer} onClick={runBatch} title="遍历整门课未完成项">
+                    整课批量
+                  </button>
+                </>
+              )
             ) : (
               <>
                 <button className="uc-btn" onClick={() => (status.state === 'paused' ? resume() : pause())}>

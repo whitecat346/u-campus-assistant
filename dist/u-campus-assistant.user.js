@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         U校园助手
 // @namespace    https://github.com/whitecat346/u-campus-assistant
-// @version      0.7.2
+// @version      0.7.3
 // @author       whitecat346
 // @description  自动完成 U校园 课程作业（听力判题作答，口语只出稿不提交）
 // @icon         https://u.unipus.cn/favicon.ico
 // @homepageURL  https://github.com/whitecat346/u-campus-assistant
 // @supportURL   https://github.com/whitecat346/u-campus-assistant/issues
-// @downloadURL  https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.2/dist/u-campus-assistant.user.js
-// @updateURL    https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.2/dist/u-campus-assistant.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.3/dist/u-campus-assistant.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@v0.7.3/dist/u-campus-assistant.user.js
 // @match        *://*.unipus.cn/*
 // @connect      127.0.0.1:8000
 // @connect      127.0.0.1:11434
@@ -12037,6 +12037,9 @@
 		if (typeof d === "string") return stripHtml(d);
 		return stripHtml(d?.directionContent?.html);
 	}
+	function stripLeadingNumber(text) {
+		return String(text ?? "").replace(/^\s*(?:\(?\d{1,2}[).、]|Q\d+[.:)])\s*/i, "").trim();
+	}
 	function shortAnswerItems(content) {
 		return (content?.questions ?? []).map((q, i) => {
 			const label = stripHtml(q.content?.html).replace(/\s+/g, " ").trim();
@@ -12551,6 +12554,12 @@
 			maxTokens: 2400
 		})).replace(/^["']|["']$/g, "").replace(/\r\n/g, "\n").trim();
 	}
+	function shortAnswerMode(direction) {
+		const d = String(direction ?? "");
+		if (/wrong information|identify the (wrong|errors?|mistakes?)|correct (it|them|the (sentence|error|mistake))/i.test(d)) return "correct";
+		if (/word\s*cloud|make a sentence/i.test(d)) return "wordcloud";
+		return "generic";
+	}
 	var SHORT_ITEM_SYS = [
 		"你在替一名中国非英语专业的大一学生完成「大学英语听说」课的简短书面练习。",
 		"这类题通常有若干小题，每题配一张词云图，要求：① 用词云里的词造一个句子；② 表明是否同意，并给理由。",
@@ -12562,21 +12571,46 @@
 		"你只能看到文字提示，看不到图片；每张图是词云，词云里的词已在「参考」中体现，请据此造句。",
 		"必须严格输出 JSON：{\"items\":[\"第 1 条正文\",\"第 2 条正文\"]}，items 长度等于小题数量。不要输出任何多余文字。"
 	].join("\n");
+	var CORRECT_SYS = [
+		"你在替一名中国非英语专业的大一学生完成「大学英语听说」课的句子改错练习。",
+		"题目要求通常是：听材料，找出下列句子中错误的信息，并把它改正。",
+		"作答要求：",
+		"1) 每个空只写一个完整的英文句子（改写后的正确版本），不要解释、不要编号、不要 Markdown、不要引号；",
+		"2) 只改动错误的那一处（人名/年份/地点/数字/原因/动作等），其余部分尽量保持原句措辞；",
+		"3) 必须依据「听力原文」判断；原文没提到的信息一律以原文为准，绝不编造；",
+		"4) 若原句信息本来就正确，就把原句照抄一遍，不要留空；",
+		"5) 语言按四级水平。",
+		"必须严格输出 JSON：{\"items\":[\"第 1 句\",\"第 2 句\"]}，items 长度等于小题数量。不要输出任何多余文字。"
+	].join("\n");
+	var GENERIC_SHORT_SYS = [
+		"你在替一名中国非英语专业的大一学生完成「大学英语听说」课的简短书面练习。",
+		"页面会给若干小题，每题一个输入框，并按「题目要求」作答。",
+		"作答要求：",
+		"1) 严格按题目要求：要求改写就改写，要求回答就回答，要求造句就造句，要求改正就给出改正后的句子；",
+		"2) 每个空只写该小题的答案本身，不要编号、不要小标题、不要 Markdown、不要解释过程；",
+		"3) 依据「听力原文」与页面给的「参考」判断，不编造材料里没有的事实；",
+		"4) 每条 20–80 词，语言按四级水平。",
+		"必须严格输出 JSON：{\"items\":[...]}，items 长度等于小题数量。不要输出任何多余文字。"
+	].join("\n");
 	async function draftShortAnswers(input) {
 		const n = input.items.length;
 		if (!n) return [];
+		const mode = input.mode ?? shortAnswerMode(input.direction);
+		const sys = mode === "correct" ? CORRECT_SYS : mode === "wordcloud" ? SHORT_ITEM_SYS : GENERIC_SHORT_SYS;
 		const blocks = input.items.map((it, i) => {
-			const ref = it.reference ? `\n参考（页面自带示例，可对齐措辞但不要照抄）：${it.reference.slice(0, 700)}` : "";
+			const refNote = mode === "correct" ? "参考（页面自带参考答案，可据此校对你的改写）" : "参考（页面自带示例，可对齐措辞但不要照抄）";
+			const ref = it.reference ? `\n${refNote}：${it.reference.slice(0, 700)}` : "";
 			return `小题 ${i + 1}（${it.label}）${it.imageUrl ? `；配图：${it.imageUrl}` : ""}${ref}`;
 		}).join("\n\n");
 		const ask = [
 			input.direction ? `题目要求：${input.direction}` : "",
+			mode === "correct" && input.transcript ? `听力原文：\n${input.transcript.slice(0, 3e3)}` : "",
 			`共有 ${n} 个小题，每个小题对应一个输入框：\n\n${blocks}`,
 			"只输出 JSON。"
 		].filter(Boolean).join("\n\n");
 		const text = stripFence(await chat([{
 			role: "system",
-			content: SHORT_ITEM_SYS
+			content: sys
 		}, {
 			role: "user",
 			content: ask
@@ -12685,22 +12719,41 @@
 		}
 		return result;
 	}
+	var MODE_LABEL = {
+		wordcloud: "词云造句",
+		correct: "句子改错",
+		generic: "按题目要求作答"
+	};
 	async function fillWriting(content, fallbackPrompt, targetSec) {
 		const inputs = textInputs();
 		const src = pickShortAnswerContent() ?? content;
 		const items = src ? shortAnswerItems(src) : [];
 		if (inputs.length >= 2 && items.length >= 2) {
-			log(`多小题书面作答：${items.length} 小题 / ${inputs.length} 个输入框，逐题生成`);
+			const direction = directionFromContent(src);
+			const mode = shortAnswerMode(direction);
+			const transcript = transcriptFromContent(src);
+			log(`多小题书面作答：${items.length} 小题 / ${inputs.length} 个输入框，形态=${mode}（${MODE_LABEL[mode] ?? mode}）${transcript ? `，有听力原文 ${transcript.length} 字` : ""}`);
 			if (!items.some((it) => it.reference.length >= 20 || it.label.length >= 8)) log("多小题简答：页面没给文字线索（只有图片），只能按题目要求造句，质量可能下降");
-			const texts = await draftShortAnswers({
-				direction: directionFromContent(src),
-				items
-			});
+			let texts = [];
+			try {
+				texts = await draftShortAnswers({
+					direction,
+					items,
+					mode,
+					transcript
+				});
+			} catch (err) {
+				const fallback = items.map((it) => stripLeadingNumber(it.reference)).filter((t) => t.length >= 10);
+				if (fallback.length === items.length) {
+					log(`LLM 生成失败（${err instanceof Error ? err.message : String(err)}），改用页面自带参考答案`);
+					texts = fallback;
+				} else throw err;
+			}
 			let filled = 0;
 			for (let i = 0; i < inputs.length; i++) {
 				const text = texts[i] ?? texts[texts.length - 1] ?? "";
 				if (!text) continue;
-				if (await fillTextArea(inputs[i], text)) filled += 1;
+				if (await fillTextArea(inputs[i], stripLeadingNumber(text))) filled += 1;
 				else log(`第 ${i + 1} 个输入框写入失败`);
 			}
 			return {
@@ -13768,7 +13821,7 @@
 						className: "uc-title",
 						children: ["U校园助手 ", (0, import_jsx_runtime.jsxs)("span", {
 							className: "uc-ver",
-							children: ["v", "0.7.2"]
+							children: ["v", "0.7.3"]
 						})]
 					}), (0, import_jsx_runtime.jsx)("button", {
 						className: "uc-btn",
@@ -14371,7 +14424,7 @@
 		if (document.getElementById(HOST_ID)) return;
 		const host = document.createElement("div");
 		host.id = HOST_ID;
-		host.dataset.ucVersion = "0.7.2";
+		host.dataset.ucVersion = "0.7.3";
 		const shadow = host.attachShadow({ mode: "open" });
 		const style = document.createElement("style");
 		style.textContent = PANEL_CSS;
@@ -14380,7 +14433,7 @@
 		shadow.appendChild(root);
 		document.documentElement.appendChild(host);
 		(0, import_client.createRoot)(root).render((0, import_jsx_runtime.jsx)(App, {}));
-		log(`已注入 ${location.href} (v0.7.2)`);
+		log(`已注入 ${location.href} (v0.7.3)`);
 		window.setTimeout(() => {
 			resumeBatchIfNeeded().catch((e) => log(`自动续跑失败：${e.message}`));
 		}, 2500);

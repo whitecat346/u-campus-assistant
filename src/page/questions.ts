@@ -332,6 +332,13 @@ export interface ShortAnswerItem {
   reference: string;
 }
 
+/** 去掉行首编号（"1. " / "1) " / "Q2: "），参考答案常带编号，直接写进输入框要清掉 */
+export function stripLeadingNumber(text: string): string {
+  return String(text ?? '')
+    .replace(/^\s*(?:\(?\d{1,2}[).、]|Q\d+[.:)])\s*/i, '')
+    .trim();
+}
+
 /**
  * 「一小题一个输入框」的书面简答（实测 u6g630：2 个空 + 2 张词云图）。
  * 结构：`questions[i].content.html` 内含 <img> 与「Sentence N」，`resources[]` 里带图片直链，

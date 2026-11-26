@@ -326,6 +326,22 @@ export async function draftSpeakingScript(promptText: string, targetSec = 75, mo
 
 /* --------------------------- 多小题书面简答 --------------------------- */
 
+/**
+ * 多小题简答的作答形态：按「题目要求」自动选提示词。
+ * 实测（2026-11-26）：同一套「一小题一个输入框」的 DOM，题目要求可能是
+ *  - 词云造句 u6g630「Use the words in each word cloud to make a sentence…」→ wordcloud
+ *  - 句子改错 u6g461「Identify the wrong information in the following sentences and correct it.」→ correct
+ *  - 其它（回答提问、改写、总结…）→ generic，只按 direction 字面要求作答
+ */
+export type ShortAnswerMode = 'wordcloud' | 'correct' | 'generic';
+
+export function shortAnswerMode(direction?: string): ShortAnswerMode {
+  const d = String(direction ?? '');
+  if (/wrong information|identify the (wrong|errors?|mistakes?)|correct (it|them|the (sentence|error|mistake))/i.test(d)) return 'correct';
+  if (/word\s*cloud|make a sentence/i.test(d)) return 'wordcloud';
+  return 'generic';
+}
+
 const SHORT_ITEM_SYS = [
   '你在替一名中国非英语专业的大一学生完成「大学英语听说」课的简短书面练习。',
   '这类题通常有若干小题，每题配一张词云图，要求：① 用词云里的词造一个句子；② 表明是否同意，并给理由。',
@@ -338,23 +354,56 @@ const SHORT_ITEM_SYS = [
   '必须严格输出 JSON：{"items":["第 1 条正文","第 2 条正文"]}，items 长度等于小题数量。不要输出任何多余文字。',
 ].join('\n');
 
+/** 句子改错：听材料→找出错的信息→改写正确（实测 u6g461：4 句 4 个 textarea） */
+const CORRECT_SYS = [
+  '你在替一名中国非英语专业的大一学生完成「大学英语听说」课的句子改错练习。',
+  '题目要求通常是：听材料，找出下列句子中错误的信息，并把它改正。',
+  '作答要求：',
+  '1) 每个空只写一个完整的英文句子（改写后的正确版本），不要解释、不要编号、不要 Markdown、不要引号；',
+  '2) 只改动错误的那一处（人名/年份/地点/数字/原因/动作等），其余部分尽量保持原句措辞；',
+  '3) 必须依据「听力原文」判断；原文没提到的信息一律以原文为准，绝不编造；',
+  '4) 若原句信息本来就正确，就把原句照抄一遍，不要留空；',
+  '5) 语言按四级水平。',
+  '必须严格输出 JSON：{"items":["第 1 句","第 2 句"]}，items 长度等于小题数量。不要输出任何多余文字。',
+].join('\n');
+
+/** 兜底：任何「一小题一个输入框」的书面题，只按 direction 字面要求作答 */
+const GENERIC_SHORT_SYS = [
+  '你在替一名中国非英语专业的大一学生完成「大学英语听说」课的简短书面练习。',
+  '页面会给若干小题，每题一个输入框，并按「题目要求」作答。',
+  '作答要求：',
+  '1) 严格按题目要求：要求改写就改写，要求回答就回答，要求造句就造句，要求改正就给出改正后的句子；',
+  '2) 每个空只写该小题的答案本身，不要编号、不要小标题、不要 Markdown、不要解释过程；',
+  '3) 依据「听力原文」与页面给的「参考」判断，不编造材料里没有的事实；',
+  '4) 每条 20–80 词，语言按四级水平。',
+  '必须严格输出 JSON：{"items":[...]}，items 长度等于小题数量。不要输出任何多余文字。',
+].join('\n');
+
 export interface ShortAnswerInput {
   direction?: string;
   items: ShortAnswerItem[];
+  /** 作答形态；不传则按 direction 自动判断 */
+  mode?: ShortAnswerMode;
+  /** 听力原文（改错题必须靠它） */
+  transcript?: string;
 }
 
 /** 逐小题生成书面简答（数量与输入框对齐） */
 export async function draftShortAnswers(input: ShortAnswerInput): Promise<string[]> {
   const n = input.items.length;
   if (!n) return [];
+  const mode = input.mode ?? shortAnswerMode(input.direction);
+  const sys = mode === 'correct' ? CORRECT_SYS : mode === 'wordcloud' ? SHORT_ITEM_SYS : GENERIC_SHORT_SYS;
   const blocks = input.items
     .map((it, i) => {
-      const ref = it.reference ? `\n参考（页面自带示例，可对齐措辞但不要照抄）：${it.reference.slice(0, 700)}` : '';
+      const refNote = mode === 'correct' ? '参考（页面自带参考答案，可据此校对你的改写）' : '参考（页面自带示例，可对齐措辞但不要照抄）';
+      const ref = it.reference ? `\n${refNote}：${it.reference.slice(0, 700)}` : '';
       return `小题 ${i + 1}（${it.label}）${it.imageUrl ? `；配图：${it.imageUrl}` : ''}${ref}`;
     })
     .join('\n\n');
   const ask = [
     input.direction ? `题目要求：${input.direction}` : '',
+    mode === 'correct' && input.transcript ? `听力原文：\n${input.transcript.slice(0, 3000)}` : '',
     `共有 ${n} 个小题，每个小题对应一个输入框：\n\n${blocks}`,
     '只输出 JSON。',
   ]
@@ -363,7 +412,7 @@ export async function draftShortAnswers(input: ShortAnswerInput): Promise<string
 
   const raw = await chat(
     [
-      { role: 'system', content: SHORT_ITEM_SYS },
+      { role: 'system', content: sys },
       { role: 'user', content: ask },
     ],
     { temperature: 0.45, maxTokens: 2400 },

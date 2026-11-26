@@ -30,9 +30,15 @@
 ## 安装
 
 1. 浏览器装 Tampermonkey（在 Edge 上装的是 **MV3 Beta**，需要在 `edge://extensions` 打开「开发者模式」才能用 `userScripts` 权限）。
-2. 点这个链接装脚本：`https://raw.githubusercontent.com/whitecat346/u-campus-assistant/main/dist/u-campus-assistant.user.js`
-   （或把 `dist/u-campus-assistant.user.js` 拖进浏览器窗口，Tampermonkey 会弹出安装页。）
-3. 打开 `u.unipus.cn`，右下角出现紫色悬浮球 `U` 即注入成功。
+2. 点这个链接装脚本（jsDelivr CDN，国内可达；GitHub 直链 `raw.githubusercontent.com` 在部分网络下 DNS 不通）：
+
+   ```
+   https://cdn.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js
+   ```
+
+   或者把仓库里的 `dist/u-campus-assistant.user.js` 下载下来拖进浏览器窗口，Tampermonkey 会弹出安装页。
+   脚本的 `@updateURL` 同样指向这个 CDN，之后在 Tampermonkey 里点「检查更新」就能升级。
+3. 打开 `u.unipus.cn`，右下角出现紫色悬浮球 `U` 即注入成功；点开面板，标题上会带版本号（如 `v0.6.8`），可据此确认装的是哪一版。
 
 ## 首次配置
 
@@ -105,7 +111,13 @@ npm run build      # 产出 dist/u-campus-assistant.user.js
 npm run typecheck
 ```
 
-本地更新通道：`node ../.cache/tools/serve.mjs 50937`（把 `dist/` 挂到 `http://127.0.0.1:50937`，脚本的 `@updateURL` 指向它，改完 rebuild 后 Tampermonkey 点「检查更新」即可）。
+本地更新通道（开发时更快、不依赖 CDN）：`node ../.cache/tools/serve.mjs 50937` 把 `dist/` 挂到 `http://127.0.0.1:50937`，然后临时把 `vite.config.ts` 里的 `updateURL`/`downloadURL` 改成 `http://127.0.0.1:50937/u-campus-assistant.user.js` 再 build。
+
+发布新版本：`npm version <x.y.z>` → `npm run build` → commit → `git push` → 打 tag → 清 CDN 缓存：
+
+```
+node -e "fetch('https://purge.jsdelivr.net/gh/whitecat346/u-campus-assistant@main/dist/u-campus-assistant.user.js').then(r=>r.text()).then(console.log)"
+```
 
 ## 常见问题
 

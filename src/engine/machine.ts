@@ -155,7 +155,7 @@ export async function runCurrentGroup(): Promise<void> {
     const prompt = speakingPromptText();
     log('说类任务：只生成短稿，不录音、不提交（决策 10）');
     const script = await draftSpeakingScript(prompt, getSettings().speaking.targetSec);
-    setStatus({ state: 'paused', kind: 'speaking', script });
+    setStatus({ state: 'idle', kind: 'speaking', script });
     log(`短稿已生成（${script.split(/\s+/).length} 词），请自己朗读后手动提交`);
     return;
   }
@@ -182,7 +182,7 @@ export async function runCurrentGroup(): Promise<void> {
       }
     } else {
       log('写作/简答题：没有找到可写入的文本域，只给出稿子');
-      setStatus({ state: 'paused', kind: 'writing', script: text });
+      setStatus({ state: 'idle', kind: 'writing', script: text });
     }
     return;
   }

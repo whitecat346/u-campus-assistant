@@ -103,6 +103,16 @@ export function checkedAnswers(): Record<number, string> {
   return out;
 }
 
+/** 还没选中的题号（0 基）。提交前必须为空，否则就是「漏题提交」 */
+export function unansweredGroups(): number[] {
+  const groups = [...radioGroups().values()];
+  const out: number[] = [];
+  groups.forEach((inputs, i) => {
+    if (!inputs.some((x) => x.checked)) out.push(i);
+  });
+  return out;
+}
+
 /* ------------------------------ 题型识别 ------------------------------ */
 
 export type TaskKind = 'listening' | 'speaking' | 'writing' | 'reading' | 'unknown';

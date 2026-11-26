@@ -11,6 +11,7 @@ import {
   questionsFromContent,
   speakingPromptText,
   transcriptFromContent,
+  unansweredGroups,
   type Question,
   type TaskKind,
 } from '../page/questions';
@@ -174,10 +175,20 @@ export async function runCurrentGroup(): Promise<void> {
   setStatus({ filled: (status.filled ?? 0) + filled });
   await sleep(400 + filled * 150);
 
+  // 硬性安全阀：页面上还有没选的题 → 绝不提交（漏题＝白丢分，且只记第一次得分）
+  const missing = unansweredGroups();
+  if (missing.length) {
+    log(`第 ${missing.map((i) => i + 1).join(',')} 题没有答案（判题未给出），本次不提交`);
+  }
+
   const mode = getSettings().submitMode;
   const lowConfidence = judged.confidence < 0.5;
   if (mode !== 'auto') {
     log('dry-run：只填不交，请在页面上自行核对后提交');
+    setStatus({ state: 'idle' });
+    return;
+  }
+  if (missing.length) {
     setStatus({ state: 'idle' });
     return;
   }

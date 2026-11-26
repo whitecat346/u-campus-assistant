@@ -30,6 +30,7 @@ import {
   speakingPromptText,
   textInputs,
   transcriptFromContent,
+  unansweredGroups,
   writingPromptFromContent,
   type TaskKind,
 } from '../page/questions';
@@ -281,8 +282,16 @@ async function runPlan(state: BatchState): Promise<BatchOutcome> {
         setStatus({ filled: (getStatus().filled ?? 0) + filled });
         await sleep(400 + filled * 120);
 
+        // 硬性安全阀：还有没选的题就绝不提交（漏题＝白丢分，且只记第一次得分）
+        const missing = unansweredGroups();
+        if (missing.length) {
+          log(`第 ${missing.map((i) => i + 1).join(',')} 题没有答案（判题未给出），该组不提交`);
+        }
+
         if (settings.submitMode === 'auto') {
-          if (judged.confidence < 0.5) {
+          if (missing.length) {
+            log('有题未填，禁止自动提交');
+          } else if (judged.confidence < 0.5) {
             log(`置信度 ${judged.confidence.toFixed(2)} 偏低，不自动提交`);
           } else {
             const outcome = await submitCurrentGroup(true);
@@ -403,6 +412,9 @@ export async function startBatch(): Promise<BatchOutcome> {
   return runPlan(state);
 }
 
+/** 防止「跳回答题页 → 被弹回目录页 → 再跳」的死循环 */
+let lastRedirectAt = 0;
+
 /** 页面重新加载后（被弹回/手滑刷新）自动续跑；调用方在 mount 里试一次即可 */
 export async function resumeBatchIfNeeded(): Promise<BatchOutcome | null> {
   const state = loadBatchState();
@@ -418,6 +430,11 @@ export async function resumeBatchIfNeeded(): Promise<BatchOutcome | null> {
   }
   if (!isAnswerPage()) {
     // 不在答题页：跳回下一条待办（整页跳转后 mount 会再调用本函数）
+    if (Date.now() - lastRedirectAt < 20000) {
+      log('刚尝试过跳回答题页（可能被服务端弹回），这次不重复跳，避免死循环');
+      return null;
+    }
+    lastRedirectAt = Date.now();
     const url = pcUrlFor(state, state.plan[state.index]);
     log(`续跑：当前不在答题页，跳转到 ${state.plan[state.index].name}`);
     location.href = url;

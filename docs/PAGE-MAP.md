@@ -250,3 +250,18 @@ Credentials: include（same-origin）
 - 抽句子必须用 `input.closest('p')`；**不能用 `div[class*="question"]`**，那只命中输入框自身外层 div（textContent 为空）。
 - 听力原文仍在 `content[0].audio.script.html`；音频直链 `course.media.unipus.cn/...mp3#duration=109.9`，免 cookie 可直下。
 - 组接口 base 为 `objectivesimple_scoop_pc`（另有 `objectivesimple_scoop_course`），与 `objectivesimple_*` 同属听力家族。
+
+## 13. 填空为什么"填了但不认"（2026-11-26 实测）
+
+现象：批量/单题填空填好后站点仍报「还有 N 个空未填，请完成后提交」，`引擎状态 failed / 错误：提交未完成`。
+
+对照实验（真机，ucontent pc.html）：
+
+| 写法 | 输入框可见值 | 点「提交」后 |
+| --- | --- | --- |
+| `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set` + `input`/`change` 事件 | 有 | 只弹「本单元学习时间/是否必修 → 确定」，**不弹**「小U只记录你第一次答题的得分 → 确认/取消」，接口未被调用，进度 `pass` 不变 |
+| `el.focus()` → `el.select()` → `document.execCommand('insertText', false, v)` → `el.blur()` | 有 | 先弹信息框，再弹确认框 → 点「确认」后 **提交成功**（`u6g446` 非必修实测 `state.pass=1, pass2=1`） |
+
+结论：站点是老版 React，受控输入只认浏览器真实编辑路径（`execCommand('insertText')` 会产生完整的输入事件序列），单纯派发 `input`/`change` 只会改 DOM 值、不进组件 state，于是前端校验认为空。
+
+实现：`src/page/questions.ts` 的 `typeInto()`（focus → 全选 → insertText → blur，失败回退原生 setter），`fillBlanks()`/`fillTextArea()` 改为逐个 `await`（每空间隔 140ms），`src/page/submit.ts` 改为轮询等「确定」与「确认」两级弹窗，并在没走到确认框时回传页面提示原文。
